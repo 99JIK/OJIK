@@ -158,6 +158,84 @@ function escapeAttr(s: string): string {
 }
 
 /**
+ * 코드 블록에 색을 입힌다.
+ *
+ * 에디터를 띄우지 않고 파서만 돌린다. 문제 본문에 코드가 여럿일 수 있는데 블록마다
+ * CodeMirror 를 만들면 무겁고, 읽기만 하는 자리라 편집기가 필요 없다.
+ *
+ * 언어가 안 적힌 블록(```만 친 것)은 건드리지 않는다. 어느 문법으로 읽을지 모르는데
+ * 아무거나 골라 칠하면 엉뚱한 색이 나와 오히려 읽기 나쁘다.
+ *
+ * 살균을 이미 거친 DOM 에 대고 하는 일이라, 여기서 넣는 것은 span 과 class 뿐이다.
+ */
+const HL_LANGS: Record<string, () => Promise<{ language: { parser: unknown } }>> = {
+    c: async () => (await import("@codemirror/lang-cpp")).cpp(),
+    cpp: async () => (await import("@codemirror/lang-cpp")).cpp(),
+    "c++": async () => (await import("@codemirror/lang-cpp")).cpp(),
+    java: async () => (await import("@codemirror/lang-java")).java(),
+    python: async () => (await import("@codemirror/lang-python")).python(),
+    py: async () => (await import("@codemirror/lang-python")).python(),
+    javascript: async () => (await import("@codemirror/lang-javascript")).javascript(),
+    js: async () => (await import("@codemirror/lang-javascript")).javascript(),
+};
+
+export async function highlightCodeBlocks(root: HTMLElement): Promise<void> {
+    const blocks = Array.from(root.querySelectorAll<HTMLElement>("pre > code[class*=language-]"));
+    if (blocks.length === 0) return;
+
+    const wanted = new Set(
+        blocks
+            .map((b) => /language-([\w+#-]+)/.exec(b.className)?.[1]?.toLowerCase() ?? "")
+            .filter((n) => n in HL_LANGS),
+    );
+    if (wanted.size === 0) return;
+
+    const { highlightCode, classHighlighter } = await import("@lezer/highlight");
+    const parsers = new Map<string, { parse: (s: string) => unknown }>();
+    for (const name of wanted) {
+        try {
+            const support = await HL_LANGS[name]!();
+            parsers.set(name, support.language.parser as { parse: (s: string) => unknown });
+        } catch {
+            // 문법을 못 받으면 그 언어만 건너뛴다. 본문은 그대로 보인다
+        }
+    }
+
+    for (const block of blocks) {
+        const name = /language-([\w+#-]+)/.exec(block.className)?.[1]?.toLowerCase() ?? "";
+        const parser = parsers.get(name);
+        if (!parser || block.dataset.hl === "1") continue;
+
+        const code = block.textContent ?? "";
+        const out = document.createDocumentFragment();
+        try {
+            highlightCode(
+                code,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- lezer 타입이 파서 종류마다 갈린다
+                (parser as any).parse(code),
+                classHighlighter,
+                (text, classes) => {
+                    const node = document.createTextNode(text);
+                    if (!classes) {
+                        out.appendChild(node);
+                        return;
+                    }
+                    const span = document.createElement("span");
+                    span.className = classes;
+                    span.appendChild(node);
+                    out.appendChild(span);
+                },
+                () => out.appendChild(document.createTextNode("\n")),
+            );
+            block.replaceChildren(out);
+            block.dataset.hl = "1";
+        } catch {
+            // 파싱이 깨져도 원문은 그대로 둔다
+        }
+    }
+}
+
+/**
  * 렌더된 HTML 안의 mermaid 자리를 실제 도식으로 바꾼다.
  * 이 함수를 부를 때만 mermaid 를 받는다.
  */

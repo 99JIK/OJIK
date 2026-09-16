@@ -208,6 +208,13 @@
         </span>
     </div>
 
+    <!--
+        grid 자식에 min-w-0 을 준다.
+
+        1fr 은 minmax(auto, 1fr) 이라 칸의 최소 너비가 내용의 min-content 다. 미리보기에
+        긴 코드 줄이 하나라도 있으면 그 줄 너비만큼 칸이 벌어지고, 결국 페이지가 가로로
+        넘친다. overflow-x-auto 를 걸어도 이 최소값은 안 줄어든다.
+    -->
     <div class="grid {mode === 'split' ? 'md:grid-cols-2 md:divide-x' : ''} divide-zinc-200 dark:divide-zinc-800">
         {#if mode !== "preview"}
             <textarea
@@ -224,12 +231,12 @@
                     dragging = true;
                 }}
                 ondragleave={() => (dragging = false)}
-                class="w-full resize-y bg-transparent p-3 font-mono text-sm outline-none disabled:opacity-50"
+                class="min-w-0 w-full resize-y bg-transparent p-3 font-mono text-sm outline-none disabled:opacity-50"
             ></textarea>
         {/if}
 
         {#if mode !== "write"}
-            <div class="min-h-40 overflow-x-auto p-3">
+            <div class="min-h-40 min-w-0 overflow-auto p-3">
                 {#if previewSrc.trim()}
                     <Markdown source={previewSrc} />
                 {:else}

@@ -28,6 +28,10 @@ import {
     scoreboard,
 } from "@ojik/db";
 import { db } from "../db";
+import { alias } from "drizzle-orm/pg-core";
+
+/** 목록에서 만든 사람을 조인한다 */
+const owners = alias(users, "owners");
 import { requireAuth, requireRole, type AuthEnv } from "../auth";
 import { collectionAccess, canSeeItems } from "../access";
 import type { User, Collection } from "@ojik/db";
@@ -201,8 +205,26 @@ export const collectionRoutes = new Hono<AuthEnv>()
                         SELECT count(*)::int FROM collection_members m
                         WHERE m.collection_id = collections.id
                     )`,
+                    /** 만든 사람. 계정이 지워졌으면 null (ownerId 가 set null) */
+                    ownerHandle: owners.handle,
+                    /*
+                     * 이 컬렉션에서 내가 맞힌 문제 수.
+                     *
+                     * 목록에서 "어디까지 했더라" 가 제일 먼저 궁금한 것이다. 비로그인이면 0 이고,
+                     * 화면은 로그인 여부를 보고 표시할지 정한다.
+                     */
+                    mySolved: user
+                        ? sql<number>`(
+                            SELECT count(DISTINCT s.problem_id)::int
+                            FROM submissions s
+                            JOIN collection_items ci
+                              ON ci.problem_id = s.problem_id AND ci.collection_id = collections.id
+                            WHERE s.user_id = ${user.id} AND s.verdict = 'accepted'
+                        )`
+                        : sql<number>`0`,
                 })
                 .from(collections)
+                .leftJoin(owners, eq(owners.id, collections.ownerId))
                 .where(conds.length ? and(...conds) : undefined)
                 .orderBy(desc(collections.id));
             return c.json({ collections: rows });

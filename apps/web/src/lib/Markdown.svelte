@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { renderMarkdown, renderDiagrams } from "$lib/markdown";
+    import { renderMarkdown, renderDiagrams, highlightCodeBlocks } from "$lib/markdown";
 
     /**
      * 마크다운 본문을 그린다.
@@ -27,6 +27,14 @@
         if (!el || !hasDiagram) return;
         const dark = document.documentElement.classList.contains("dark");
         void renderDiagrams(el, dark);
+    });
+
+    // 코드 블록도 붙은 뒤에 칠한다. 언어가 적힌 블록이 없으면 아무것도 안 받는다
+    $effect(() => {
+        void html;
+        const el = host;
+        if (!el) return;
+        void highlightCodeBlocks(el);
     });
 </script>
 

@@ -4,13 +4,22 @@
     import { session } from "$lib/session.svelte";
     import { meta } from "$lib/meta.svelte";
     import { verdictClass, verdictText, formatMemory, formatTime, formatDate } from "$lib/format";
-    import { VERDICT_LABEL, type Verdict, type SubmissionStatus } from "@ojik/core";
+    import {
+        VERDICT_LABEL,
+        PROBLEM_KIND_LABEL,
+        getLanguage,
+        type Verdict,
+        type SubmissionStatus,
+        type ProblemKind,
+    } from "@ojik/core";
+    import CodeView from "$lib/CodeView.svelte";
 
     interface Detail {
         id: number;
         problemId: number;
         userId: number;
-        language: string;
+        /** 단답형에는 언어가 없다 */
+        language: string | null;
         sourceCode: string | null;
         status: SubmissionStatus;
         verdict: Verdict | null;
@@ -36,7 +45,20 @@
     }
 
     const id = $derived(Number(page.params.id));
-    let data = $state<{ submission: Detail; results: Result[]; verdictHidden: boolean } | null>(null);
+    interface AnswerRow {
+        idx: number;
+        prompt: string;
+        given: string;
+    }
+
+    let data = $state<{
+        submission: Detail;
+        results: Result[];
+        verdictHidden: boolean;
+        problemKind: ProblemKind;
+        /** 단답형일 때만. 그 외에는 null */
+        answers: AnswerRow[] | null;
+    } | null>(null);
     let error = $state<string | null>(null);
 
     async function load() {
@@ -89,7 +111,11 @@
         </span>
         <span class="text-zinc-500">{formatTime(s.maxTimeMs)}</span>
         <span class="text-zinc-500">{formatMemory(s.maxMemoryKb)}</span>
-        <span class="text-zinc-500">{meta.label(s.language)}</span>
+        {#if s.language}
+            <span class="text-zinc-500">{meta.label(s.language)}</span>
+        {:else}
+            <span class="text-zinc-500">{PROBLEM_KIND_LABEL[data.problemKind]}</span>
+        {/if}
         <span class="text-zinc-500">{formatDate(s.createdAt)}</span>
     </div>
 
@@ -164,13 +190,37 @@
     {/if}
 
     <section class="mt-6">
-        <h2 class="mb-2 text-sm font-semibold">소스 코드</h2>
-        {#if s.sourceCode !== null}
-            <pre class="overflow-x-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.sourceCode}</pre>
+        {#if data.answers}
+            <h2 class="mb-2 text-sm font-semibold">낸 답</h2>
+            <ul class="divide-y divide-zinc-100 rounded-md border border-zinc-200 dark:divide-zinc-900 dark:border-zinc-800">
+                {#each data.answers as a (a.idx)}
+                    {@const r = data.results.find((x) => x.idx === a.idx)}
+                    <li class="px-4 py-3">
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-xs text-zinc-400">{a.idx + 1}</span>
+                            <span class="flex-1 text-sm">{a.prompt}</span>
+                            {#if r}
+                                <span class="text-xs {verdictClass(r.verdict, 'done')}">
+                                    {r.verdict === "accepted" ? `+${r.points}` : "0"}
+                                </span>
+                            {/if}
+                        </div>
+                        <p class="mt-1 whitespace-pre-wrap font-mono text-sm {a.given.trim() ? '' : 'text-zinc-400'}">
+                            {a.given.trim() || "(비움)"}
+                        </p>
+                    </li>
+                {/each}
+            </ul>
+            <p class="mt-2 text-xs text-zinc-400">기대 답은 보여주지 않습니다.</p>
         {:else}
-            <p class="rounded-md bg-zinc-100 px-4 py-3 text-sm text-zinc-500 dark:bg-zinc-900">
-                이 제출의 소스는 공개되어 있지 않습니다.
-            </p>
+            <h2 class="mb-2 text-sm font-semibold">소스 코드</h2>
+            {#if s.sourceCode !== null}
+                <CodeView code={s.sourceCode} mode={getLanguage(s.language ?? "")?.editorMode ?? "cpp"} />
+            {:else}
+                <p class="rounded-md bg-zinc-100 px-4 py-3 text-sm text-zinc-500 dark:bg-zinc-900">
+                    이 제출의 소스는 공개되어 있지 않습니다.
+                </p>
+            {/if}
         {/if}
     </section>
 {/if}

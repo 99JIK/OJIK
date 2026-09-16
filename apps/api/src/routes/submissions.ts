@@ -14,6 +14,7 @@ import {
     fillBlanks,
     encodeAnswers,
     gradeAnswer,
+    decodeAnswers,
     type LanguageId,
     type Verdict,
 } from "@ojik/core";
@@ -339,10 +340,43 @@ export const submissionRoutes = new Hono<AuthEnv>()
                   .orderBy(submissionResults.idx)
             : [];
 
+        const [problem] = await db
+            .select({ kind: problems.kind })
+            .from(problems)
+            .where(eq(problems.id, sub.problemId));
+        const kind = problem?.kind ?? "code";
+
+        /*
+         * 단답형 제출은 소스 코드가 아니라 답 묶음이다.
+         *
+         * sourceCode 에 JSON 이 들어 있어서 그대로 내보내면 화면이 중괄호를 뿌린다.
+         * 여기서 풀어 주고 sourceCode 는 안 내보낸다. 문항 지문도 같이 준다.
+         * 지문 없이 "문항 0" 만 보여 주면 뭘 틀렸는지 알 수가 없다.
+         */
+        let answers: Array<{ idx: number; prompt: string; given: string }> | null = null;
+        if (kind === "answer" && showSource) {
+            const given = decodeAnswers(sub.sourceCode);
+            const cases = await db
+                .select({ idx: testcases.idx })
+                .from(testcases)
+                .where(eq(testcases.problemId, sub.problemId))
+                .orderBy(asc(testcases.idx));
+            answers = await Promise.all(
+                cases.map(async (t) => ({
+                    idx: t.idx,
+                    prompt: await readTestcaseFile(sub.problemId, t.idx, "in").catch(() => ""),
+                    given: given[t.idx] ?? "",
+                })),
+            );
+        }
+
         return c.json({
+            problemKind: kind,
+            answers,
             submission: {
                 ...sub,
-                sourceCode: showSource ? sub.sourceCode : null,
+                // 단답형은 위 answers 로 나간다. JSON 원문을 소스인 척 보내지 않는다
+                sourceCode: showSource && kind !== "answer" ? sub.sourceCode : null,
                 // 채점 실패 원인은 운영자만 본다. 내부 경로나 도커 오류가 그대로 들어 있다
                 judgeError: isStaff ? sub.judgeError : null,
 

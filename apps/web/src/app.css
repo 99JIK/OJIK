@@ -13,6 +13,77 @@ html {
     color-scheme: light dark;
 }
 
+/*
+ * 스크롤바.
+ *
+ * 기본 스크롤바가 두껍고 밝아서, 나란히 보기처럼 칸이 여럿인 화면에서 제일 눈에 띄는
+ * 요소가 되어 버린다. 얇게 깔고 색을 죽인다.
+ *
+ * 표준 속성(scrollbar-width, scrollbar-color)을 먼저 쓰고 webkit 을 뒤에 둔다.
+ * 파이어폭스는 표준만 보고, 크롬은 둘 다 보는데 webkit 쪽이 더 세밀하다.
+ */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-zinc-300) transparent;
+}
+:root:is(.dark) * {
+    scrollbar-color: var(--color-zinc-700) transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+    background: var(--color-zinc-300);
+    border-radius: 9999px;
+    /* 트랙과 붙지 않게 안쪽으로 물린다. 배경색과 같은 테두리를 둘러 여백처럼 보이게 한다 */
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--color-zinc-400);
+    background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+    background: transparent;
+}
+:root:is(.dark) *::-webkit-scrollbar-thumb {
+    background: var(--color-zinc-700);
+    background-clip: content-box;
+}
+:root:is(.dark) *::-webkit-scrollbar-thumb:hover {
+    background: var(--color-zinc-600);
+    background-clip: content-box;
+}
+
+/*
+ * 페이지가 가로로 안 넘치게 한다.
+ *
+ * 긴 코드 줄이나 넓은 표가 하나만 있어도 본문 전체가 옆으로 밀린다. 넘칠 만한 것은
+ * 각자 스크롤 칸에 들어가야 하고, 그걸 빠뜨렸을 때 화면 전체가 망가지지는 않게 막아 둔다.
+ */
+body {
+    overflow-x: hidden;
+}
+
+/*
+ * grid 칸이 내용 때문에 벌어지지 않게 한다.
+ *
+ * 1fr 은 minmax(auto, 1fr) 이라 칸의 최소 너비가 내용의 min-content 다. 긴 코드 한 줄이나
+ * 넓은 표가 하나만 있어도 칸이 그만큼 벌어지고 페이지가 가로로 넘친다. 안쪽에
+ * overflow-x: auto 를 걸어도 이 최소값은 안 줄어든다.
+ *
+ * :where() 로 감싸 우선순위를 0 으로 둔다. 어쩌다 min-width 가 필요한 자리는 클래스를
+ * 직접 주면 그쪽이 이긴다.
+ */
+:where(.grid) > * {
+    min-width: 0;
+}
+
 /**
  * 목록 표 공통 스타일.
  *
@@ -102,6 +173,47 @@ html {
     }
     :root:is(.dark) .ojik-md pre { background: var(--color-zinc-900); }
     .ojik-md pre code { background: none; padding: 0; font-size: 0.8125rem; }
+
+    /*
+     * 코드 블록 색.
+     *
+     * lezer 의 classHighlighter 가 tok-* 클래스를 붙인다. 에디터 테마를 쓰지 않는 건,
+     * 본문 속 코드까지 어두운 배경이 되면 글 흐름이 끊기기 때문이다. 배경은 그대로 두고
+     * 글자색만 바꾼다.
+     *
+     * 색은 밝은 배경에서 대비가 나오게 골랐다. 다크 모드는 같은 계열을 밝게 올린다.
+     */
+    .ojik-md .tok-keyword { color: #7c3aed; }
+    .ojik-md .tok-comment { color: #71717a; font-style: italic; }
+    .ojik-md .tok-string,
+    .ojik-md .tok-string2 { color: #15803d; }
+    .ojik-md .tok-number,
+    .ojik-md .tok-bool,
+    .ojik-md .tok-null { color: #b45309; }
+    .ojik-md .tok-typeName,
+    .ojik-md .tok-className,
+    .ojik-md .tok-namespace { color: #0e7490; }
+    .ojik-md .tok-function,
+    .ojik-md .tok-macroName { color: #1d4ed8; }
+    .ojik-md .tok-operator,
+    .ojik-md .tok-punctuation { color: #52525b; }
+    .ojik-md .tok-propertyName { color: #be185d; }
+
+    :root:is(.dark) .ojik-md .tok-keyword { color: #c4b5fd; }
+    :root:is(.dark) .ojik-md .tok-comment { color: #a1a1aa; }
+    :root:is(.dark) .ojik-md .tok-string,
+    :root:is(.dark) .ojik-md .tok-string2 { color: #86efac; }
+    :root:is(.dark) .ojik-md .tok-number,
+    :root:is(.dark) .ojik-md .tok-bool,
+    :root:is(.dark) .ojik-md .tok-null { color: #fcd34d; }
+    :root:is(.dark) .ojik-md .tok-typeName,
+    :root:is(.dark) .ojik-md .tok-className,
+    :root:is(.dark) .ojik-md .tok-namespace { color: #67e8f9; }
+    :root:is(.dark) .ojik-md .tok-function,
+    :root:is(.dark) .ojik-md .tok-macroName { color: #93c5fd; }
+    :root:is(.dark) .ojik-md .tok-operator,
+    :root:is(.dark) .ojik-md .tok-punctuation { color: #a1a1aa; }
+    :root:is(.dark) .ojik-md .tok-propertyName { color: #f9a8d4; }
 
     .ojik-md blockquote {
         border-inline-start: 3px solid var(--color-zinc-300);

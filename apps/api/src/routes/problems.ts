@@ -200,24 +200,42 @@ export const problemRoutes = new Hono<AuthEnv>()
             .limit(q.limit)
             .offset(q.offset);
 
-        // 로그인했으면 각 문제를 풀었는지 같이 내려준다. 목록에서 N번 질의하지 않게 한 번에 모은다
+        /*
+         * 전체 개수.
+         *
+         * 이게 없으면 화면이 마지막 페이지를 알 수 없어서, 끝에서도 다음 버튼이 눌리고
+         * 빈 목록이 나온다. 같은 조건으로 한 번 더 세는 비용은 목록 질의와 같은 인덱스를
+         * 타므로 실제로는 얼마 안 든다.
+         */
+        const [total] = await db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(problems)
+            .where(conds.length ? and(...conds) : undefined);
+
+        /*
+         * 로그인했으면 각 문제의 내 상태를 같이 내려준다. 목록에서 N번 질의하지 않게 한 번에 모은다.
+         *
+         * 맞힘과 시도함을 나눈다. 안 푼 문제와 틀린 문제가 같아 보이면 목록에서
+         * "다시 볼 것" 을 찾을 수가 없다.
+         */
         let solved: number[] = [];
+        let tried: number[] = [];
         if (user && rows.length > 0) {
             const ids = rows.map((r) => r.id);
             const got = await db
-                .selectDistinct({ problemId: submissions.problemId })
+                .select({
+                    problemId: submissions.problemId,
+                    accepted: sql<boolean>`bool_or(${submissions.verdict} = 'accepted')`,
+                })
                 .from(submissions)
-                .where(
-                    and(
-                        eq(submissions.userId, user.id),
-                        eq(submissions.verdict, "accepted"),
-                        inArray(submissions.problemId, ids),
-                    ),
-                );
-            solved = got.map((g) => g.problemId);
+                .where(and(eq(submissions.userId, user.id), inArray(submissions.problemId, ids)))
+                .groupBy(submissions.problemId);
+
+            solved = got.filter((g) => g.accepted).map((g) => g.problemId);
+            tried = got.filter((g) => !g.accepted).map((g) => g.problemId);
         }
 
-        return c.json({ problems: rows, solved, offset: q.offset, limit: q.limit });
+        return c.json({ problems: rows, solved, tried, total: total?.n ?? 0, offset: q.offset, limit: q.limit });
     })
 
     .get("/:id{[0-9]+}", async (c) => {

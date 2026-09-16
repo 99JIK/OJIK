@@ -185,12 +185,13 @@
         {/if}
 
         {#each detail.samples as s, i (s.idx)}
+            <!-- grid 자식에 min-w-0. 없으면 긴 예제 한 줄이 칸을 밀어 페이지가 가로로 넘친다 -->
             <div class="grid gap-3 sm:grid-cols-2">
-                <div>
+                <div class="min-w-0">
                     <h3 class="mb-1 text-sm font-semibold">예제 입력 {i + 1}</h3>
                     <pre class="overflow-x-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.input}</pre>
                 </div>
-                <div>
+                <div class="min-w-0">
                     <h3 class="mb-1 text-sm font-semibold">예제 출력 {i + 1}</h3>
                     <pre class="overflow-x-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.output}</pre>
                 </div>
