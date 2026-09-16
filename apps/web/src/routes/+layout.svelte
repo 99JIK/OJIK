@@ -71,11 +71,11 @@
                 aria-label="테마 전환">{dark ? "밝게" : "어둡게"}</button
             >
 
-            {#if session.isStaff}
+            {#if session.canTeach}
                 <a
                     href="/admin"
                     class="rounded-md px-3 py-1.5 text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    class:font-semibold={active("/admin")}>관리</a
+                    class:font-semibold={active("/admin")}>{session.isStaff ? "관리" : "강의"}</a
                 >
             {/if}
 

@@ -38,10 +38,9 @@
 
     async function load() {
         try {
-            const all = await Promise.all(
-                COLLECTION_PRESETS.map((p) => get<{ collections: Row[] }>("/collections", { preset: p })),
-            );
-            rows = all.flatMap((r) => r.collections);
+            // 내가 운영하는 것만 본다. 관리자라도 남의 강의까지 다 뜨면 목록이 못 쓰게 된다
+            const r = await get<{ collections: Row[] }>("/collections", { mine: true });
+            rows = r.collections;
             error = null;
         } catch (e) {
             error = e instanceof Error ? e.message : String(e);

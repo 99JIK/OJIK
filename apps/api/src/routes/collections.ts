@@ -117,19 +117,45 @@ async function requireManage(user: User, id: number): Promise<Collection> {
 export const collectionRoutes = new Hono<AuthEnv>()
     .get(
         "/",
-        v("query", z.object({ preset: z.enum(COLLECTION_PRESETS).optional() })),
+        v(
+            "query",
+            z.object({
+                preset: z.enum(COLLECTION_PRESETS).optional(),
+                /** 내가 운영하는 것만. 관리 화면이 쓴다 */
+                mine: z.coerce.boolean().optional(),
+            }),
+        ),
         async (c) => {
-            const { preset } = c.req.valid("query");
+            const { preset, mine } = c.req.valid("query");
             const user = c.get("user");
             const isStaff = user ? atLeast(user.role, "staff") : false;
 
             const conds = [];
             if (preset) conds.push(eq(collections.preset, preset));
-            if (!isStaff) {
-                // private 은 자기가 속한 것만. unlisted 는 목록에 안 띄운다
+
+            if (mine) {
+                /*
+                 * 운영하는 것만. staff 지름길을 여기서는 안 쓴다.
+                 * 출제자에게 남의 강의까지 다 보여 주면 관리 화면이 못 쓰게 된다.
+                 * 관리자가 전체를 봐야 하면 mine 없이 부르면 된다
+                 */
+                if (!user) throw new HTTPException(401, { message: "로그인이 필요합니다" });
+                conds.push(sql`(${collections.ownerId} = ${user.id} OR EXISTS (
+                    SELECT 1 FROM collection_members m
+                    WHERE m.collection_id = ${collections.id}
+                      AND m.user_id = ${user.id} AND m.role = 'manager'))`);
+            } else if (!isStaff) {
+                /*
+                 * private 은 자기가 속한 것만. unlisted 는 목록에 안 띄운다.
+                 *
+                 * 만든 사람도 포함해야 한다. 강사가 비공개 강의를 열면 스스로를 멤버로
+                 * 넣기 전까지 자기 목록에서 사라졌다
+                 */
                 conds.push(
                     user
-                        ? sql`(${collections.visibility} = 'public' OR EXISTS (
+                        ? sql`(${collections.visibility} = 'public'
+                               OR ${collections.ownerId} = ${user.id}
+                               OR EXISTS (
                                SELECT 1 FROM collection_members m
                                WHERE m.collection_id = ${collections.id} AND m.user_id = ${user.id}))`
                         : eq(collections.visibility, "public"),

@@ -1,5 +1,5 @@
 import os from "node:os";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
     createDb,
     claimNext,
@@ -147,15 +147,39 @@ function waitForWork(timeoutMs: number): Promise<void> {
     });
 }
 
+/**
+ * 하트비트.
+ *
+ * 등록 행을 갱신하면서, 그 행이 아직 내 것인지 같이 본다.
+ *
+ * 중복 기동 검사는 기동할 때 한 번만 돈다. 그 사이 등록 행이 사라지면(운영 중 손으로
+ * 지우거나, 마이그레이션으로 테이블을 비우거나) 대기 중이던 워커들이 전부 검사를 통과해
+ * 여럿이 동시에 돌게 된다. 실제로 그렇게 됐고, 서로의 러너 컨테이너를 지우면서 채점이
+ * 404 로 떨어졌다. 등록을 한 번 받는 열쇠가 아니라 계속 쥐고 있는 임차로 바꾼다.
+ *
+ * 내 것이 아니게 됐으면 조용히 물러난다. 둘이 계속 도는 것보다 하나가 죽는 게 낫다.
+ */
 async function heartbeatLoop(): Promise<void> {
     while (true) {
         await sleep(JUDGE_HEARTBEAT_INTERVAL_MS);
         try {
             await heartbeat(db, config.WORKER_ID, [...inFlight]);
-            await db
+
+            // pid 까지 맞을 때만 갱신된다. 다른 워커가 이어받았으면 0행이 바뀐다
+            const updated = await db
                 .update(judgeWorkers)
                 .set({ lastSeenAt: new Date(), busy: inFlight.size })
-                .where(eq(judgeWorkers.id, config.WORKER_ID));
+                .where(and(eq(judgeWorkers.id, config.WORKER_ID), eq(judgeWorkers.pid, process.pid)))
+                .returning({ id: judgeWorkers.id });
+
+            if (updated.length === 0) {
+                log.error("등록이 다른 워커에게 넘어갔습니다. 물러납니다", {
+                    workerId: config.WORKER_ID,
+                    pid: process.pid,
+                });
+                // 채점 중인 것은 lease 가 끊겨 다른 워커가 회수한다
+                process.exit(1);
+            }
         } catch (e) {
             log.warn("heartbeat failed", { err: String(e) });
         }

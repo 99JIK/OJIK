@@ -1,6 +1,6 @@
 <script lang="ts">
     import { page } from "$app/state";
-    import { get, put } from "$lib/api";
+    import { get, put, patch, del } from "$lib/api";
     import { PRESET_LABEL, type CollectionPreset } from "@ojik/core";
     import type { ProblemSummary } from "$lib/types";
 
@@ -27,6 +27,19 @@
     let items = $state<Item[]>([]);
     let handles = $state("");
     let replaceMembers = $state(false);
+
+    interface Member {
+        userId: number;
+        handle: string;
+        displayName: string | null;
+        role: "member" | "manager";
+        joinedAt: string;
+        startedAt: string | null;
+        solvedHere: number;
+    }
+    let members = $state<Member[]>([]);
+    let problemCount = $state(0);
+    let membersLoaded = $state(false);
 
     let problems = $state<ProblemSummary[]>([]);
     let pickerQuery = $state("");
@@ -127,6 +140,50 @@
         }
     }
 
+    async function loadMembers() {
+        try {
+            const r = await get<{ members: Member[]; problemCount: number }>(`/collections/${id}/members`);
+            members = r.members;
+            problemCount = r.problemCount;
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            membersLoaded = true;
+        }
+    }
+
+    $effect(() => {
+        void id;
+        void loadMembers();
+    });
+
+    async function setMemberRole(m: Member, role: "member" | "manager") {
+        busy = true;
+        error = null;
+        try {
+            await patch(`/collections/${id}/members/${m.userId}`, { role });
+            await loadMembers();
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            busy = false;
+        }
+    }
+
+    async function removeMember(m: Member) {
+        if (!confirm(`${m.handle} 을(를) 명단에서 뺄까요? 제출 기록은 남습니다.`)) return;
+        busy = true;
+        error = null;
+        try {
+            await del(`/collections/${id}/members/${m.userId}`);
+            await loadMembers();
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            busy = false;
+        }
+    }
+
     async function saveMembers() {
         const list = handles
             .split(/[\s,]+/)
@@ -149,6 +206,7 @@
                 notice += ` 없는 아이디 ${r.missing.length}개: ${r.missing.join(", ")}`;
             }
             handles = "";
+            await loadMembers();
         } catch (e) {
             error = e instanceof Error ? e.message : String(e);
         } finally {
@@ -280,7 +338,87 @@
     </section>
 
     <section class="mt-8 border-t border-zinc-200 pt-6 dark:border-zinc-800">
-        <h3 class="mb-2 font-medium">멤버</h3>
+        <div class="mb-2 flex items-baseline justify-between">
+            <h3 class="font-medium">수강생</h3>
+            <span class="text-xs text-zinc-400">
+                {members.length}명{problemCount > 0 ? ` · 문제 ${problemCount}개` : ""}
+            </span>
+        </div>
+
+        {#if !membersLoaded}
+            <p class="text-sm text-zinc-400">불러오는 중...</p>
+        {:else if members.length === 0}
+            <p class="rounded-md border border-zinc-200 px-4 py-6 text-center text-sm text-zinc-400 dark:border-zinc-800">
+                아직 아무도 없습니다. 아래에 아이디를 붙여넣어 등록하세요.
+            </p>
+        {:else}
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="border-b border-zinc-200 text-left text-xs text-zinc-500 dark:border-zinc-800">
+                        <tr>
+                            <th class="py-2 pr-3 font-medium">아이디</th>
+                            <th class="py-2 pr-3 font-medium">이름</th>
+                            {#if problemCount > 0}
+                                <th class="py-2 pr-3 font-medium">진도</th>
+                            {/if}
+                            <th class="py-2 pr-3 font-medium">역할</th>
+                            <th class="py-2 font-medium"></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-zinc-100 dark:divide-zinc-900">
+                        {#each members as m (m.userId)}
+                            <tr>
+                                <td class="py-2 pr-3">
+                                    <a href="/user/{m.handle}" class="hover:underline">{m.handle}</a>
+                                </td>
+                                <td class="py-2 pr-3 text-zinc-500">{m.displayName ?? ""}</td>
+                                {#if problemCount > 0}
+                                    <td class="py-2 pr-3">
+                                        <div class="flex items-center gap-2">
+                                            <div class="h-1.5 w-20 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                                                <div
+                                                    class="h-full rounded-full bg-blue-600"
+                                                    style="width: {Math.round((m.solvedHere / problemCount) * 100)}%"
+                                                ></div>
+                                            </div>
+                                            <span class="tabular-nums text-xs text-zinc-500">
+                                                {m.solvedHere}/{problemCount}
+                                            </span>
+                                        </div>
+                                    </td>
+                                {/if}
+                                <td class="py-2 pr-3">
+                                    <button
+                                        onclick={() => setMemberRole(m, m.role === "manager" ? "member" : "manager")}
+                                        disabled={busy}
+                                        class="rounded px-2 py-0.5 text-xs {m.role === 'manager'
+                                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                                            : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'}"
+                                        title="눌러서 바꿉니다"
+                                    >
+                                        {m.role === "manager" ? "조교" : "수강생"}
+                                    </button>
+                                </td>
+                                <td class="py-2 text-right">
+                                    <button
+                                        onclick={() => removeMember(m)}
+                                        disabled={busy}
+                                        class="text-xs text-zinc-400 underline hover:text-zinc-700 dark:hover:text-zinc-200"
+                                    >
+                                        빼기
+                                    </button>
+                                </td>
+                            </tr>
+                        {/each}
+                    </tbody>
+                </table>
+            </div>
+            <p class="mt-2 text-xs text-zinc-400">
+                진도는 이 컬렉션에 담긴 문제 중 맞힌 수입니다. 조교는 이 컬렉션을 고칠 수 있습니다.
+            </p>
+        {/if}
+
+        <h4 class="mt-6 mb-2 text-sm font-medium">명단 등록</h4>
         <textarea
             bind:value={handles}
             rows="4"
