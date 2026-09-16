@@ -137,9 +137,14 @@
     {@const p = detail.problem}
     <div class="flex items-baseline justify-between gap-4">
         <h1 class="text-2xl font-bold">{p.id}. {p.title}</h1>
-        <a href="/submissions?problemId={p.id}" class="text-sm text-blue-600 hover:underline dark:text-blue-400">
-            채점 현황
-        </a>
+        <div class="flex shrink-0 gap-3 text-sm">
+            <a href="/problem/{p.id}/solutions" class="text-blue-600 hover:underline dark:text-blue-400">
+                풀이
+            </a>
+            <a href="/submissions?problemId={p.id}" class="text-blue-600 hover:underline dark:text-blue-400">
+                채점 현황
+            </a>
+        </div>
     </div>
 
     <dl class="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-zinc-200 bg-zinc-200 text-sm sm:grid-cols-4 dark:border-zinc-800 dark:bg-zinc-800">

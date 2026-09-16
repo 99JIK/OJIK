@@ -22,6 +22,13 @@
       "when": 1789535726245,
       "tag": "0002_lang_expand",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789536881093,
+      "tag": "0003_solutions",
+      "breakpoints": true
     }
   ]
 }

@@ -11,6 +11,7 @@ import { metaRoutes } from "./routes/meta";
 import { problemRoutes } from "./routes/problems";
 import { submissionRoutes } from "./routes/submissions";
 import { collectionRoutes } from "./routes/collections";
+import { solutionRoutes } from "./routes/solutions";
 
 const app = new Hono<AuthEnv>();
 
@@ -30,6 +31,7 @@ app.route("/api", metaRoutes);
 app.route("/api/problems", problemRoutes);
 app.route("/api/submissions", submissionRoutes);
 app.route("/api/collections", collectionRoutes);
+app.route("/api/solutions", solutionRoutes);
 
 /**
  * 처리되지 않은 예외를 여기서 500 으로 바꾼다.
