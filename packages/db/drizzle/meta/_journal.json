@@ -29,6 +29,13 @@
       "when": 1789536881093,
       "tag": "0003_solutions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789540636939,
+      "tag": "0004_instructor_and_course_problems",
+      "breakpoints": true
     }
   ]
 }

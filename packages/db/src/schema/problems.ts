@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, serial, text, integer, boolean, timestamp, index, primaryKey, doublePrecision, uniqueIndex } from "drizzle-orm/pg-core";
 import { checkerTypeEnum } from "./enums";
 import { users } from "./users";
@@ -44,6 +45,21 @@ export const problems = pgTable(
         acceptedCount: integer().notNull().default(0),
         submissionCount: integer().notNull().default(0),
 
+        /**
+         * 이 문제가 특정 강의에 묶여 있는지. null 이면 공개 아카이브 문제다.
+         *
+         * 강사는 자기 강의에 묶인 문제만 만들고 고칠 수 있다. 공개 아카이브는 출제자가 관리한다.
+         * 강사 수가 늘면 아무나 아카이브에 문제를 쌓게 되고, 그건 되돌리기 어렵다.
+         *
+         * 컬렉션을 지우면 딸린 문제도 같이 지운다. 강의 전용 문제는 그 강의 밖에서 쓸 데가 없고,
+         * 남겨 두면 주인 없는 문제가 목록에 안 보이는 채로 쌓인다. 공개로 올릴 문제는
+         * 관리자가 이 값을 null 로 비우면 아카이브로 옮겨진다.
+         *
+         * 타입은 순환 참조를 피하려고 여기서 collections 를 import 하지 않는다.
+         * 외래키는 마이그레이션에서 건다
+         */
+        ownerCollectionId: integer(),
+
         createdBy: integer().references(() => users.id, { onDelete: "set null" }),
         createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
         updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -51,6 +67,10 @@ export const problems = pgTable(
     (t) => [
         index("problems_public_idx").on(t.isPublic, t.id),
         index("problems_difficulty_idx").on(t.difficulty),
+        /** 강의 문제 목록. null 이 대부분이라 부분 인덱스로 둔다 */
+        index("problems_owner_collection_idx")
+            .on(t.ownerCollectionId)
+            .where(sql`${t.ownerCollectionId} IS NOT NULL`),
     ],
 );
 

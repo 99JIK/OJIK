@@ -30,6 +30,7 @@ import {
 import { db } from "../db";
 import { requireAuth, requireRole, type AuthEnv } from "../auth";
 import { collectionAccess, canSeeItems } from "../access";
+import type { User, Collection } from "@ojik/db";
 
 /**
  * 교재, 문제집, 대회, 코딩테스트가 전부 이 라우트다.
@@ -92,6 +93,25 @@ async function loadBySlug(slug: string) {
     const [c] = await db.select().from(collections).where(eq(collections.slug, slug));
     if (!c) throw new HTTPException(404, { message: "찾을 수 없습니다" });
     return c;
+}
+
+/**
+ * 이 컬렉션을 운영할 수 있는지 보고, 없으면 던진다.
+ *
+ * 전역 staff 로만 막던 자리다. 그러면 컬렉션별 manager 와 owner 가 이름만 있고 아무것도
+ * 못 한다. 강사가 자기 강의를 못 고치는 상태였다.
+ *
+ * 못 보는 컬렉션이면 404, 보이는데 운영 권한만 없으면 403 이다. private 컬렉션의
+ * 존재 자체를 흘리지 않으려는 것이고, 다른 라우트와 같은 규칙이다.
+ */
+async function requireManage(user: User, id: number): Promise<Collection> {
+    const [col] = await db.select().from(collections).where(eq(collections.id, id));
+    if (!col) throw new HTTPException(404, { message: "찾을 수 없습니다" });
+
+    const access = await collectionAccess(user, col);
+    if (!access.canView) throw new HTTPException(404, { message: "찾을 수 없습니다" });
+    if (!access.canManage) throw new HTTPException(403, { message: "이 컬렉션의 운영자가 아닙니다" });
+    return col;
 }
 
 export const collectionRoutes = new Hono<AuthEnv>()
@@ -188,7 +208,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
         });
     })
 
-    .post("/", requireRole("staff"), v("json", Body), async (c) => {
+    .post("/", requireRole("instructor"), v("json", Body), async (c) => {
         const body = c.req.valid("json");
         const axes = fillAxes(body);
 
@@ -203,12 +223,11 @@ export const collectionRoutes = new Hono<AuthEnv>()
         return c.json({ collection: row }, 201);
     })
 
-    .patch("/:id{[0-9]+}", requireRole("staff"), v("json", Body.partial()), async (c) => {
+    .patch("/:id{[0-9]+}", requireAuth, v("json", Body.partial()), async (c) => {
         const id = Number(c.req.param("id"));
         const patch = c.req.valid("json");
 
-        const [current] = await db.select().from(collections).where(eq(collections.id, id));
-        if (!current) throw new HTTPException(404, { message: "찾을 수 없습니다" });
+        const current = await requireManage(c.get("user")!, id);
 
         const merged = { ...current, ...patch };
         const bad = validateAxes(merged);
@@ -223,8 +242,9 @@ export const collectionRoutes = new Hono<AuthEnv>()
     })
 
     /** 항목 전체 교체. 순서가 곧 idx 다. 설명과 문제를 섞을 수 있다 */
-    .put("/:id{[0-9]+}/items", requireRole("staff"), v("json", ItemsBody), async (c) => {
+    .put("/:id{[0-9]+}/items", requireAuth, v("json", ItemsBody), async (c) => {
         const id = Number(c.req.param("id"));
+        await requireManage(c.get("user")!, id);
         const { items } = c.req.valid("json");
 
         for (const [i, it] of items.entries()) {
@@ -262,7 +282,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
      */
     .put(
         "/:id{[0-9]+}/members",
-        requireRole("staff"),
+        requireAuth,
         v(
             "json",
             z.object({
@@ -273,6 +293,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
         ),
         async (c) => {
             const id = Number(c.req.param("id"));
+            await requireManage(c.get("user")!, id);
             const { handles, role, replace } = c.req.valid("json");
 
             const found = handles.length
@@ -304,6 +325,110 @@ export const collectionRoutes = new Hono<AuthEnv>()
             return c.json({ ok: true, added: found.length, missing });
         },
     )
+
+    /**
+     * 수강생 명단.
+     *
+     * 넣는 API 만 있고 보는 API 가 없었다. 누가 등록돼 있는지 확인할 방법이 없으면
+     * 명단을 잘못 올려도 학생이 안 보인다고 할 때까지 모른다.
+     *
+     * 진행 상황도 같이 준다. 교재나 문제집에서 누가 어디까지 풀었는지가 강사가 제일
+     * 먼저 보고 싶은 것이다. 컬렉션에 든 문제만 센다.
+     */
+    .get("/:id{[0-9]+}/members", requireAuth, async (c) => {
+        const id = Number(c.req.param("id"));
+        await requireManage(c.get("user")!, id);
+
+        const rows = await db
+            .select({
+                userId: collectionMembers.userId,
+                handle: users.handle,
+                displayName: users.displayName,
+                role: collectionMembers.role,
+                joinedAt: collectionMembers.joinedAt,
+                startedAt: collectionMembers.startedAt,
+                endsAt: collectionMembers.endsAt,
+                solvedHere: sql<number>`(
+                    SELECT count(DISTINCT s.problem_id)::int
+                    FROM submissions s
+                    JOIN collection_items ci
+                      ON ci.problem_id = s.problem_id AND ci.collection_id = ${id}
+                    WHERE s.user_id = ${collectionMembers.userId} AND s.verdict = 'accepted'
+                )`,
+            })
+            .from(collectionMembers)
+            .innerJoin(users, eq(users.id, collectionMembers.userId))
+            .where(eq(collectionMembers.collectionId, id))
+            .orderBy(users.handle);
+
+        const [total] = await db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(collectionItems)
+            .where(and(eq(collectionItems.collectionId, id), eq(collectionItems.kind, "problem")));
+
+        return c.json({ members: rows, problemCount: total?.n ?? 0 });
+    })
+
+    /**
+     * 멤버 한 명의 역할 변경. 조교를 manager 로 올리는 데 쓴다.
+     *
+     * 전체 명단 교체(PUT)로도 되지만, 한 명 바꾸려고 명단 전체를 다시 올리면
+     * 그 사이 스스로 참여한 사람이 날아간다.
+     */
+    .patch(
+        "/:id{[0-9]+}/members/:userId{[0-9]+}",
+        requireAuth,
+        v("json", z.object({ role: z.enum(MEMBER_ROLES) })),
+        async (c) => {
+            const id = Number(c.req.param("id"));
+            const userId = Number(c.req.param("userId"));
+            const col = await requireManage(c.get("user")!, id);
+            const { role } = c.req.valid("json");
+
+            // 마지막 운영자가 스스로를 내리면 아무도 못 고치는 컬렉션이 된다.
+            // 만든 사람은 멤버 표와 무관하게 운영자라 여기서 빼고 센다
+            if (role === "member" && col.ownerId !== userId) {
+                const [managers] = await db
+                    .select({ n: sql<number>`count(*)::int` })
+                    .from(collectionMembers)
+                    .where(
+                        and(
+                            eq(collectionMembers.collectionId, id),
+                            eq(collectionMembers.role, "manager"),
+                        ),
+                    );
+                if ((managers?.n ?? 0) <= 1 && col.ownerId === null) {
+                    throw new HTTPException(400, {
+                        message: "마지막 운영자입니다. 다른 사람을 먼저 운영자로 올리세요.",
+                    });
+                }
+            }
+
+            const [row] = await db
+                .update(collectionMembers)
+                .set({ role })
+                .where(
+                    and(eq(collectionMembers.collectionId, id), eq(collectionMembers.userId, userId)),
+                )
+                .returning();
+            if (!row) throw new HTTPException(404, { message: "명단에 없는 사람입니다" });
+            return c.json({ member: row });
+        },
+    )
+
+    /** 멤버 한 명 제외. 제출 기록은 남는다 */
+    .delete("/:id{[0-9]+}/members/:userId{[0-9]+}", requireAuth, async (c) => {
+        const id = Number(c.req.param("id"));
+        const userId = Number(c.req.param("userId"));
+        await requireManage(c.get("user")!, id);
+
+        const [row] = await db
+            .delete(collectionMembers)
+            .where(and(eq(collectionMembers.collectionId, id), eq(collectionMembers.userId, userId)))
+            .returning();
+        if (!row) throw new HTTPException(404, { message: "명단에 없는 사람입니다" });
+        return c.json({ ok: true });
+    })
 
     /** 공개 컬렉션에 스스로 참여. private 은 운영자가 명단으로 넣는다 */
     .post("/:id{[0-9]+}/join", requireAuth, async (c) => {

@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { v } from "../validate";
-import { and, asc, desc, eq, ilike, sql, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, sql, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import { PROBLEM_LIMITS, CHECKER_TYPES } from "@ojik/core";
-import { problems, testcases, tags, problemTags, submissions, enqueue } from "@ojik/db";
+import { PROBLEM_LIMITS, CHECKER_TYPES, atLeast } from "@ojik/core";
+import { problems, testcases, tags, problemTags, submissions, collections, enqueue } from "@ojik/db";
 import { db } from "../db";
-import { requireRole, type AuthEnv } from "../auth";
-import { problemAccess } from "../access";
+import { requireAuth, requireRole, type AuthEnv } from "../auth";
+import { problemAccess, collectionAccess, canEditProblem } from "../access";
+import type { User, Problem } from "@ojik/db";
 import {
     writeTestcaseFile,
     readTestcaseFile,
@@ -33,6 +34,8 @@ const ProblemBody = z.object({
     isPublic: z.boolean().default(false),
     difficulty: z.number().int().min(1).max(30).nullable().optional(),
     tagIds: z.array(z.number().int().positive()).default([]),
+    /** 이 강의 전용 문제로 만든다. null 이면 공개 아카이브 문제. 강사는 반드시 채워야 한다 */
+    ownerCollectionId: z.number().int().positive().nullable().optional(),
 });
 
 const TestcaseBody = z.object({
@@ -55,7 +58,42 @@ const ListQuery = z.object({
     limit: z.coerce.number().int().min(1).max(100).default(50),
     offset: z.coerce.number().int().min(0).default(0),
     sort: z.enum(["id", "difficulty", "accepted"]).default("id"),
+    /** 이 강의 전용 문제만. 그 강의를 운영하는 사람만 쓸 수 있다 */
+    collectionId: z.coerce.number().int().positive().optional(),
 });
+
+/**
+ * 이 소속으로 문제를 만들 수 있는지.
+ *
+ * ownerCollectionId 가 null 이면 공개 아카이브라 출제자 이상만 된다.
+ * 값이 있으면 그 컬렉션의 운영자여야 한다.
+ */
+async function assertCanCreate(user: User, ownerCollectionId: number | null): Promise<void> {
+    if (ownerCollectionId === null) {
+        if (!atLeast(user.role, "staff")) {
+            throw new HTTPException(403, {
+                message: "공개 문제는 출제자만 만들 수 있습니다. 강의를 지정하세요.",
+            });
+        }
+        return;
+    }
+
+    const [col] = await db.select().from(collections).where(eq(collections.id, ownerCollectionId));
+    if (!col) throw new HTTPException(404, { message: "강의를 찾을 수 없습니다" });
+    if (!(await collectionAccess(user, col)).canManage) {
+        throw new HTTPException(403, { message: "이 강의의 운영자가 아닙니다" });
+    }
+}
+
+/** 고칠 수 있는 문제를 불러온다. 못 고치면 던진다 */
+async function loadEditable(user: User, id: number): Promise<Problem> {
+    const [p] = await db.select().from(problems).where(eq(problems.id, id));
+    if (!p) throw new HTTPException(404, { message: "문제를 찾을 수 없습니다" });
+    if (!(await canEditProblem(user, p))) {
+        throw new HTTPException(403, { message: "이 문제를 고칠 권한이 없습니다" });
+    }
+    return p;
+}
 
 export const problemRoutes = new Hono<AuthEnv>()
     .get("/", v("query", ListQuery), async (c) => {
@@ -64,8 +102,30 @@ export const problemRoutes = new Hono<AuthEnv>()
         const isStaff = user ? user.role === "admin" || user.role === "staff" : false;
 
         const conds = [];
-        // 비공개 문제는 목록에 아예 안 띄운다. 제목만 보이는 것도 정보다
-        if (!isStaff) conds.push(eq(problems.isPublic, true));
+        if (q.collectionId) {
+            /*
+             * 자기 강의 문제 목록.
+             *
+             * 운영자가 아니면 빈 목록이 아니라 403 이다. 조용히 비워 주면 강사가
+             * "왜 내 문제가 안 보이지" 하고 헤맨다.
+             *
+             * 여기서는 isPublic 을 안 본다. 강의 전용 문제는 비공개가 기본이고,
+             * 공개 여부는 아카이브에 낼 때 쓰는 값이라 강의 안에서는 의미가 없다.
+             */
+            if (!user) throw new HTTPException(401, { message: "로그인이 필요합니다" });
+            const [col] = await db.select().from(collections).where(eq(collections.id, q.collectionId));
+            if (!col) throw new HTTPException(404, { message: "찾을 수 없습니다" });
+            if (!(await collectionAccess(user, col)).canManage) {
+                throw new HTTPException(403, { message: "이 강의의 운영자가 아닙니다" });
+            }
+            conds.push(eq(problems.ownerCollectionId, q.collectionId));
+        } else {
+            // 비공개 문제는 목록에 아예 안 띄운다. 제목만 보이는 것도 정보다
+            if (!isStaff) conds.push(eq(problems.isPublic, true));
+            // 강의 전용 문제는 공개 아카이브 목록에 안 나온다. 그 강의 안에서만 보인다.
+            // staff 도 마찬가지다. 남의 강의 과제가 아카이브 목록을 채우면 목록이 못 쓰게 된다
+            conds.push(isNull(problems.ownerCollectionId));
+        }
         if (q.q) conds.push(ilike(problems.title, `%${q.q}%`));
         if (q.tag) {
             conds.push(
@@ -162,10 +222,18 @@ export const problemRoutes = new Hono<AuthEnv>()
         });
     })
 
-    .post("/", requireRole("staff"), v("json", ProblemBody), async (c) => {
+    /**
+     * 문제 생성.
+     *
+     * 출제자는 공개 아카이브에도 강의에도 낼 수 있다. 강사는 자기가 운영하는 강의에만 낸다.
+     * 강사에게 아카이브를 열어 주면 아무나 공개 문제를 쌓게 되고, 그건 되돌리기 어렵다.
+     */
+    .post("/", requireRole("instructor"), v("json", ProblemBody), async (c) => {
         const body = c.req.valid("json");
         const user = c.get("user")!;
         const { tagIds, ...fields } = body;
+
+        await assertCanCreate(user, fields.ownerCollectionId ?? null);
 
         const p = await db.transaction(async (tx) => {
             const [row] = await tx
@@ -180,9 +248,20 @@ export const problemRoutes = new Hono<AuthEnv>()
         return c.json({ problem: p }, 201);
     })
 
-    .patch("/:id{[0-9]+}", requireRole("staff"), v("json", ProblemBody.partial()), async (c) => {
+    .patch("/:id{[0-9]+}", requireAuth, v("json", ProblemBody.partial()), async (c) => {
         const id = Number(c.req.param("id"));
         const { tagIds, ...fields } = c.req.valid("json");
+        const user = c.get("user")!;
+
+        const current = await loadEditable(user, id);
+        // 소속을 옮기는 건 출제자 이상만 한다. 강사가 자기 강의 문제를 아카이브로 올리거나
+        // 남의 강의로 넘기지 못하게 막는다
+        if ("ownerCollectionId" in fields && fields.ownerCollectionId !== current.ownerCollectionId) {
+            if (!atLeast(user.role, "staff")) {
+                throw new HTTPException(403, { message: "문제의 소속은 출제자만 바꿀 수 있습니다" });
+            }
+            await assertCanCreate(user, fields.ownerCollectionId ?? null);
+        }
 
         const p = await db.transaction(async (tx) => {
             const [row] = await tx
@@ -212,8 +291,9 @@ export const problemRoutes = new Hono<AuthEnv>()
         return c.json({ ok: true });
     })
 
-    .get("/:id{[0-9]+}/testcases", requireRole("staff"), async (c) => {
+    .get("/:id{[0-9]+}/testcases", requireAuth, async (c) => {
         const id = Number(c.req.param("id"));
+        await loadEditable(c.get("user")!, id);
         const rows = await db
             .select()
             .from(testcases)
@@ -228,8 +308,9 @@ export const problemRoutes = new Hono<AuthEnv>()
      *
      * 교체 후 기존 제출은 옛 케이스로 매겨진 결과를 들고 있다. 필요하면 아래 rejudge 를 부를 것.
      */
-    .put("/:id{[0-9]+}/testcases", requireRole("staff"), v("json", TestcaseBody), async (c) => {
+    .put("/:id{[0-9]+}/testcases", requireAuth, v("json", TestcaseBody), async (c) => {
         const id = Number(c.req.param("id"));
+        await loadEditable(c.get("user")!, id);
         const { testcases: incoming } = c.req.valid("json");
 
         const [p] = await db.select({ id: problems.id }).from(problems).where(eq(problems.id, id));
@@ -271,8 +352,9 @@ export const problemRoutes = new Hono<AuthEnv>()
     })
 
     /** 이 문제의 제출을 전부 큐로 되돌린다. 테스트케이스를 고친 뒤에 쓴다 */
-    .post("/:id{[0-9]+}/rejudge", requireRole("staff"), async (c) => {
+    .post("/:id{[0-9]+}/rejudge", requireAuth, async (c) => {
         const id = Number(c.req.param("id"));
+        await loadEditable(c.get("user")!, id);
         const rows = await db
             .select({ id: submissions.id })
             .from(submissions)

@@ -28,6 +28,7 @@
         "langs": "tsx scripts/langs.ts",
         "e2e:submit": "tsx scripts/e2e-submit.ts",
         "e2e:solutions": "tsx scripts/e2e-solutions.ts",
+        "e2e:teaching": "tsx scripts/e2e-teaching.ts",
         "check:data": "tsx scripts/check-data.ts",
         "recount": "tsx scripts/recount.ts",
         "set-role": "tsx scripts/set-role.ts"
