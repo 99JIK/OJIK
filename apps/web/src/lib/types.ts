@@ -1,4 +1,4 @@
-import type { Verdict, SubmissionStatus, LanguageId } from "@ojik/core";
+import type { Verdict, SubmissionStatus, LanguageId, EditorMode } from "@ojik/core";
 
 export interface PublicUser {
     id: number;
@@ -56,5 +56,5 @@ export interface LanguageOption {
     id: LanguageId;
     label: string;
     extension: string;
-    editorMode: "c" | "cpp" | "python" | "java";
+    editorMode: EditorMode;
 }

@@ -1,9 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadEnv } from "@ojik/core/env";
-import { requireLanguage, effectiveRunLimits, resolveRunArgv } from "@ojik/core";
+import { LANGUAGES, requireLanguage, effectiveRunLimits, resolveRunArgv } from "@ojik/core";
+import { FIXTURES } from "./lang-fixtures";
 import * as isolate from "../apps/worker/src/isolate";
-import { docker, imageExists, removeContainer } from "./docker";
+import { docker, imageExists, removeContainer, type RunResult } from "./docker";
 
 /**
  * isolate 호출 규약이 실물에서 먹는지 확인한다.
@@ -206,6 +207,127 @@ int main(void){
     await removeContainer(name);
     await bindMountCheck();
     await uidIsolationCheck();
+    await allLanguagesCheck();
+}
+
+/**
+ * 등록된 전 언어를 한 번씩 돌린다.
+ *
+ * 언어마다 함정이 하나씩 있다. Debian 의 JDK 가 /etc 심링크를 거쳐서 샌드박스 안에서
+ * 끊긴 것이 그런 예다. 등록만 해 놓고 실제로는 안 도는 상태를 막으려면 전부 돌려 봐야 한다.
+ *
+ * 언어를 추가하면 scripts/lang-fixtures.ts 에 소스를 넣어야 한다. 안 넣으면 여기서 알린다.
+ */
+async function allLanguagesCheck() {
+    console.log("\n== 등록된 전 언어 ==");
+
+    for (const lang of LANGUAGES) {
+        const fx = FIXTURES[lang.id as keyof typeof FIXTURES];
+        if (!fx) {
+            bad(`${lang.label}: 확인용 소스가 없습니다 (scripts/lang-fixtures.ts 에 추가하세요)`);
+            continue;
+        }
+
+        const image = `${prefix}-${lang.runner}:latest`;
+        if (!(await imageExists(image))) {
+            bad(`${lang.label}: 이미지 ${image} 가 없습니다`);
+            continue;
+        }
+
+        const cname = `${name}-${lang.id}`;
+        await removeContainer(cname);
+        const up = await docker([
+            "run", "-d", "--name", cname, "--privileged", "--network", "none",
+            image, "sleep", "infinity",
+        ]);
+        if (up.code !== 0) {
+            bad(`${lang.label}: 컨테이너 기동 실패`, up.stderr || up.stdout);
+            continue;
+        }
+
+        const e = (a: string[], i?: string) =>
+            docker(["exec", ...(i !== undefined ? ["-i"] : []), cname, ...a], i !== undefined ? { input: i } : {});
+        const read = async (p: string) => (await e(["cat", `/var/local/lib/isolate/0/${p}`])).stdout;
+
+        try {
+            await runLanguage(lang, fx, e, read);
+        } catch (err) {
+            bad(`${lang.label}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        await removeContainer(cname);
+    }
+}
+
+type Exec = (a: string[], i?: string) => Promise<RunResult>;
+
+async function runLanguage(
+    lang: (typeof LANGUAGES)[number],
+    fx: { ok: string; loop: string; compile: string },
+    e: Exec,
+    read: (p: string) => Promise<string>,
+) {
+    const limits = effectiveRunLimits(lang, 1000, 256);
+    const argv = resolveRunArgv(lang, 256);
+
+    /** 소스를 넣고 컴파일한 뒤 판정을 돌려준다 */
+    async function compileOnly(src: string, metaName: string) {
+        await e(["isolate", ...isolate.cleanupArgs(0)]);
+        await e(["isolate", ...isolate.initArgs(0)]);
+        await e(["sh", "-c", `cat > /var/local/lib/isolate/0/box/${lang.sourceName}`], src);
+        if (!lang.compile) return "ok" as const;
+        await e(["isolate", ...isolate.runArgs({
+            boxId: 0, argv: lang.compile.argv, limits: lang.compile.limits,
+            stdoutFile: "compile.out", stderrFile: "compile.err",
+            metaPath: `/var/local/lib/isolate/0/${metaName}`, fsizeKb: 128 * 1024,
+        })]);
+        return isolate.classify(isolate.parseMeta(await read(metaName)), lang.compile.limits);
+    }
+
+    async function run(metaName: string) {
+        await e(["rm", "-f", "/var/local/lib/isolate/0/box/stdout"]);
+        await e(["sh", "-c", "printf '3 4\n' > /var/local/lib/isolate/0/box/stdin"]);
+        await e(["isolate", ...isolate.runArgs({
+            boxId: 0, argv, limits,
+            stdinFile: "stdin", stdoutFile: "stdout", stderrFile: "stderr",
+            metaPath: `/var/local/lib/isolate/0/${metaName}`, fsizeKb: 32 * 1024,
+        })]);
+        return {
+            verdict: isolate.classify(isolate.parseMeta(await read(metaName)), limits),
+            out: (await read("box/stdout")).trim(),
+        };
+    }
+
+    // 1. 정상 동작
+    const c1 = await compileOnly(fx.ok, "c1.meta");
+    if (c1 !== "ok") {
+        bad(`${lang.label}: 정상 소스가 컴파일 안 됨 (${c1})`, await read("box/compile.err"));
+        return;
+    }
+    const r1 = await run("r1.meta");
+    r1.out === "7"
+        ? ok(`${lang.label}: 3 4 -> 7`)
+        : bad(`${lang.label}: 출력이 7 이 아님 (${r1.verdict})`, JSON.stringify(r1.out));
+
+    // 2. 무한 루프가 시간 초과로 끊기는지
+    const c2 = await compileOnly(fx.loop, "c2.meta");
+    if (c2 === "ok") {
+        const r2 = await run("r2.meta");
+        r2.verdict === "time_limit_exceeded"
+            ? ok(`${lang.label}: 무한 루프가 시간 초과로 끊김`)
+            : bad(`${lang.label}: 무한 루프 판정이 ${r2.verdict}`);
+    } else {
+        bad(`${lang.label}: 루프 소스가 컴파일 안 됨 (${c2})`);
+    }
+
+    // 3. 문법 오류가 컴파일 에러로 잡히는지
+    if (lang.compile) {
+        const c3 = await compileOnly(fx.compile, "c3.meta");
+        c3 !== "ok"
+            ? ok(`${lang.label}: 문법 오류가 컴파일 단계에서 잡힘`)
+            : bad(`${lang.label}: 문법 오류인데 컴파일이 통과함`);
+    }
+
+    await e(["isolate", ...isolate.cleanupArgs(0)]);
 }
 
 /**

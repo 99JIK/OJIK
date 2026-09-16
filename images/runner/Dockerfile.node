@@ -1,0 +1,11 @@
+ARG BASE=ojik-runner-base:latest
+FROM ${BASE}
+
+# Debian trixie 의 nodejs 패키지. npm 은 필요 없다. 제출 코드가 의존성을 받을 일이 없고
+# 컨테이너에는 네트워크도 없다
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends nodejs; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN test -x /usr/bin/node && node --version

@@ -42,6 +42,7 @@
      * problemId 는 만들어질 때 한 번만 본다. 문제를 바꿔 가며 편집하는 경우는
      * 라우트가 {#key id} 로 컴포넌트를 새로 만들기 때문에 이걸로 충분하다.
      */
+    // svelte-ignore state_referenced_locally
     let loaded = $state(problemId === null);
 
     $effect(() => {
