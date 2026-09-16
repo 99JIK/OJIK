@@ -98,3 +98,55 @@ test("빈 본문은 빈 결과", async () => {
     assert.equal(await html(""), "");
     assert.equal(await html("   "), "");
 });
+
+test("그림판이 만든 SVG 가 살아남는다", async () => {
+    const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360" ` +
+        `fill="none" stroke="currentColor" stroke-width="2">` +
+        `<line x1="10" y1="20" x2="90" y2="40"/><rect x="0" y="0" width="50" height="50"/>` +
+        `<text x="5" y="5" font-size="14" fill="currentColor" stroke="none">A</text></svg>`;
+    const h = await html(svg);
+    assert.match(h, /<svg/);
+    assert.match(h, /<line/);
+    assert.match(h, /<rect/);
+    assert.match(h, /<text/);
+    // 다크 모드에서 보이려면 이 값이 남아야 한다
+    assert.match(h, /currentColor/);
+});
+
+test("SVG 안의 script 는 버린다", async () => {
+    const h = await html(`<svg><script>alert(1)</scr` + `ipt><line x1="0" y1="0" x2="1" y2="1"/></svg>`);
+    assert.ok(!h.includes("alert"), h);
+});
+
+test("SVG 안의 이벤트 속성은 버린다", async () => {
+    const h = await html(`<svg><rect onclick="alert(1)" onload="alert(2)" width="10" height="10"/></svg>`);
+    assert.ok(!h.includes("onclick"), h);
+    assert.ok(!h.includes("onload"), h);
+});
+
+test("foreignObject 는 안 받는다", async () => {
+    // SVG 안에 임의의 HTML 을 넣는 통로다. 그림판도 mermaid 도 쓰지 않는다
+    const h = await html(`<svg><foreignObject><div>안</div></foreignObject></svg>`);
+    assert.ok(!h.toLowerCase().includes("foreignobject"), h);
+});
+
+test("URI 검사는 여전히 링크에 걸린다", async () => {
+    /*
+     * ADD_URI_SAFE_ATTR 로 도형 속성을 검사에서 빼 준 뒤에도 링크는 그대로 막혀야 한다.
+     *
+     * img 의 data: 는 안 본다. DOMPurify 가 img, video, audio 에 한해 data: 를 허용하는데
+     * (DATA_URI_TAGS), img 에 든 text/html 은 그림으로 안 그려지고 실행도 안 되므로
+     * 막을 이유가 없다. 실제로 위험한 건 눌러서 이동하는 자리다.
+     */
+    const a = await html("[클릭](javascript:alert(1))");
+    assert.ok(!a.includes("javascript:"), a);
+
+    const dataLink = await html(`<a href="data:text/html;base64,PHNjcmlwdD4=">클릭</a>`);
+    assert.ok(!dataLink.includes("data:text/html"), dataLink);
+});
+
+test("그림 data URI 는 통과한다", async () => {
+    const ok = await html(`<img src="data:image/png;base64,iVBORw0KGgo=">`);
+    assert.match(ok, /data:image\/png/);
+});

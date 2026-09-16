@@ -39,8 +39,11 @@ const SANITIZE = {
         "math", "semantics", "mrow", "mi", "mo", "mn", "msup", "msub", "mfrac",
         "msqrt", "mtext", "annotation", "mstyle", "mspace", "munderover", "munder", "mover",
         // 도식과 그림
+        //
+        // foreignObject 는 뺐다. SVG 안에 임의의 HTML 을 넣는 통로라 굳이 열어 둘 이유가 없다.
+        // mermaid 는 이 살균기를 안 거치고(renderDiagrams 가 직접 그린다) 그림판은 쓰지 않는다.
         "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
-        "text", "tspan", "defs", "marker", "foreignObject",
+        "text", "tspan", "defs", "marker",
     ],
     ALLOWED_ATTR: [
         "href", "title", "alt", "src", "width", "height", "colspan", "rowspan",
@@ -49,8 +52,27 @@ const SANITIZE = {
         "viewBox", "d", "fill", "stroke", "stroke-width", "stroke-dasharray",
         "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
         "points", "transform", "text-anchor", "font-size", "font-family",
-        "marker-end", "marker-start", "id", "xmlns",
+        "id", "xmlns",
     ],
+
+    /*
+     * URI 검사를 건너뛸 속성.
+     *
+     * ALLOWED_URI_REGEXP 는 URI 속성만 보는 게 아니라 URI_SAFE 로 표시되지 않은 모든 값을
+     * 검사한다. 그래서 fill="none" 이나 viewBox="0 0 640 360" 처럼 URI 가 아닌 값이 통째로
+     * 떨어져 나간다. 목록에 svg 태그를 적어 뒀는데도 그림이 속성 없는 껍데기로만 남았다.
+     *
+     * 여기 적는 것은 URI 를 담을 수 없는 속성뿐이다. href 와 src 는 그대로 아래 정규식이 본다.
+     * marker-end 와 marker-start 는 url(#id) 를 받는 자리라 목록에서 아예 뺐다.
+     * 그림판은 화살촉을 polyline 으로 그리고, mermaid 는 이 살균기를 안 거친다.
+     */
+    ADD_URI_SAFE_ATTR: [
+        "viewBox", "d", "fill", "stroke", "stroke-width", "stroke-dasharray",
+        "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+        "points", "transform", "text-anchor", "font-size", "font-family",
+        "width", "height", "colspan", "rowspan",
+    ],
+
     // javascript: 와 data: 로 스크립트가 들어오는 경로를 막는다
     ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|#|\/|data:image\/(?:png|jpeg|gif|webp|svg\+xml);base64,)/i,
 };
