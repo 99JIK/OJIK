@@ -1,8 +1,9 @@
 <script lang="ts">
     import { page } from "$app/state";
     import { goto } from "$app/navigation";
-    import { get, post } from "$lib/api.js";
-    import { session } from "$lib/session.svelte.js";
+    import { get, post } from "$lib/api";
+    import { session } from "$lib/session.svelte";
+    import { meta } from "$lib/meta.svelte";
 
     /**
      * 에디터는 제출 영역이 실제로 그려질 때만 받아 온다.
@@ -17,7 +18,7 @@
         editorPromise ??= import("$lib/Editor.svelte");
         return editorPromise;
     }
-    import type { ProblemDetail, Sample, LanguageOption } from "$lib/types.js";
+    import type { ProblemDetail, Sample, LanguageOption } from "$lib/types";
 
     const id = $derived(Number(page.params.id));
 
@@ -50,14 +51,54 @@
 
     $effect(() => {
         void (async () => {
-            // 선택지를 화면에 배열로 박지 않고 서버에서 받는다.
-            // 언어 추가가 백엔드 한 곳에서 끝나는 이유
-            const r = await get<{ languages: LanguageOption[] }>("/languages");
-            languages = r.languages;
+            await meta.ensureLanguages();
+            languages = meta.languages;
             // 마지막에 쓴 언어를 기억한다. 매번 고르게 하면 번거롭다
             const saved = localStorage.getItem("lastLanguage");
-            language = saved && r.languages.some((l) => l.id === saved) ? saved : (r.languages[0]?.id ?? "");
+            language = saved && languages.some((l) => l.id === saved) ? saved : (languages[0]?.id ?? "");
         })();
+    });
+
+    /**
+     * 작성 중인 코드를 브라우저에 남긴다.
+     *
+     * 탭을 닫거나 새로고침해서 코드를 잃는 일이 흔하다. 문제와 언어별로 따로 보관해서
+     * 언어를 바꿔 가며 풀어도 섞이지 않는다. 제출에 성공하면 지운다.
+     */
+    const draftKey = $derived(`draft:${id}:${language}`);
+    let restored = $state(false);
+
+    $effect(() => {
+        const k = draftKey;
+        if (!language) return;
+        restored = false;
+        try {
+            const saved = localStorage.getItem(k);
+            if (saved) {
+                code = saved;
+                restored = true;
+            } else {
+                code = "";
+            }
+        } catch {
+            // 사생활 보호 모드 등에서 localStorage 가 막힐 수 있다. 그냥 안 쓴다
+        }
+    });
+
+    $effect(() => {
+        const k = draftKey;
+        const c = code;
+        if (!language) return;
+        // 타이핑마다 쓰면 낭비다. 멈춘 뒤에 한 번 쓴다
+        const t = setTimeout(() => {
+            try {
+                if (c.trim()) localStorage.setItem(k, c);
+                else localStorage.removeItem(k);
+            } catch {
+                // 저장이 막혀도 작성은 계속돼야 한다
+            }
+        }, 800);
+        return () => clearTimeout(t);
     });
 
     const mode = $derived(languages.find((l) => l.id === language)?.editorMode ?? "cpp");
@@ -72,6 +113,12 @@
         try {
             localStorage.setItem("lastLanguage", language);
             await post("/submissions", { problemId: id, language, sourceCode: code });
+            // 제출에 성공했으니 임시 보관본은 지운다
+            try {
+                localStorage.removeItem(draftKey);
+            } catch {
+                // 못 지워도 다음 제출 때 덮어쓴다
+            }
             void goto(`/submissions?problemId=${id}`);
         } catch (e) {
             submitError = e instanceof Error ? e.message : String(e);
@@ -161,7 +208,21 @@
                         <option value={l.id}>{l.label}</option>
                     {/each}
                 </select>
-                <span class="text-xs text-zinc-500">{detail.problem.checkerType === "trim" ? "줄 끝 공백은 무시됩니다" : ""}</span>
+                <span class="text-xs text-zinc-500">
+                    {detail.problem.checkerType === "trim" ? "줄 끝 공백은 무시됩니다" : ""}
+                </span>
+                {#if restored && code.trim()}
+                    <span class="ml-auto flex items-center gap-2 text-xs text-zinc-400">
+                        작성 중이던 코드를 불러왔습니다
+                        <button
+                            onclick={() => {
+                                code = "";
+                                restored = false;
+                            }}
+                            class="underline hover:text-zinc-600">지우기</button
+                        >
+                    </span>
+                {/if}
             </div>
 
             {#if language}

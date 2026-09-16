@@ -3,7 +3,7 @@
     import { onMount } from "svelte";
     import { page } from "$app/state";
     import { goto } from "$app/navigation";
-    import { session } from "$lib/session.svelte.js";
+    import { session } from "$lib/session.svelte";
 
     let { children } = $props();
     let dark = $state(false);

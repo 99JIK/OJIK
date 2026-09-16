@@ -25,6 +25,7 @@ import {
     problems,
     submissions,
     users,
+    scoreboard,
 } from "@ojik/db";
 import { db } from "../db";
 import { requireAuth, requireRole, type AuthEnv } from "../auth";
@@ -381,88 +382,21 @@ export const collectionRoutes = new Hono<AuthEnv>()
         if (!canView) throw new HTTPException(404, { message: "찾을 수 없습니다" });
         if (col.scoring === "none") return c.json({ collection: col, scoring: "none", rows: [] });
 
-        const start = col.startsAt ?? new Date(0);
         const freezeAt =
             col.reveal === "frozen" && col.freezeMinutes > 0 && col.endsAt
                 ? new Date(col.endsAt.getTime() - col.freezeMinutes * 60_000)
                 : null;
         // 운영자는 동결을 무시하고 실제 순위를 본다
-        const cutoff = canManage || !freezeAt ? (col.endsAt ?? new Date()) : freezeAt;
+        // 동결 중이면 동결 시각까지만 센다. 운영자는 동결을 무시하고 실제 순위를 본다
+        const cutoff = canManage || !freezeAt ? col.endsAt : freezeAt;
 
-        const rows =
-            col.scoring === "ioi"
-                ? await db.execute(sql`
-                      SELECT u.id AS user_id, u.handle, u.display_name,
-                             coalesce(sum(best.score), 0)::int AS score,
-                             0::int AS penalty,
-                             count(*) FILTER (WHERE best.score > 0)::int AS solved
-                      FROM collection_members r
-                      JOIN users u ON u.id = r.user_id
-                      LEFT JOIN LATERAL (
-                          SELECT s.problem_id, max(s.score) AS score
-                          FROM submissions s
-                          WHERE s.collection_id = ${col.id} AND s.user_id = u.id
-                            AND s.created_at BETWEEN ${start} AND ${cutoff}
-                          GROUP BY s.problem_id
-                      ) best ON true
-                      WHERE r.collection_id = ${col.id}
-                      GROUP BY u.id, u.handle, u.display_name
-                      ORDER BY score DESC, u.handle ASC
-                  `)
-                : col.scoring === "icpc"
-                  ? await db.execute(sql`
-                        WITH ac AS (
-                            SELECT s.user_id, s.problem_id, min(s.created_at) AS ac_at
-                            FROM submissions s
-                            WHERE s.collection_id = ${col.id} AND s.verdict = 'accepted'
-                              AND s.created_at BETWEEN ${start} AND ${cutoff}
-                            GROUP BY s.user_id, s.problem_id
-                        ),
-                        -- 못 푼 문제의 오답은 페널티에 안 들어간다. ac 와 조인하는 이유다
-                        wrong AS (
-                            SELECT s.user_id, s.problem_id, count(*) AS n
-                            FROM submissions s
-                            JOIN ac ON ac.user_id = s.user_id AND ac.problem_id = s.problem_id
-                            WHERE s.collection_id = ${col.id}
-                              AND s.verdict IS NOT NULL
-                              AND s.verdict <> 'accepted'
-                              -- 채점 오류는 제출자 잘못이 아니므로 뺀다
-                              AND s.verdict <> 'internal_error'
-                              AND s.created_at >= ${start} AND s.created_at < ac.ac_at
-                            GROUP BY s.user_id, s.problem_id
-                        )
-                        SELECT u.id AS user_id, u.handle, u.display_name,
-                               count(ac.ac_at)::int AS solved,
-                               coalesce(sum(
-                                   floor(extract(epoch FROM ac.ac_at - ${start}) / 60)
-                                   + coalesce(w.n, 0) * ${col.penaltyMinutes}
-                               ), 0)::int AS penalty,
-                               0::int AS score
-                        FROM collection_members r
-                        JOIN users u ON u.id = r.user_id
-                        LEFT JOIN ac ON ac.user_id = u.id
-                        LEFT JOIN wrong w ON w.user_id = ac.user_id AND w.problem_id = ac.problem_id
-                        WHERE r.collection_id = ${col.id}
-                        GROUP BY u.id, u.handle, u.display_name
-                        ORDER BY solved DESC, penalty ASC, u.handle ASC
-                    `)
-                  : await db.execute(sql`
-                        SELECT u.id AS user_id, u.handle, u.display_name,
-                               count(DISTINCT s.problem_id)::int AS solved,
-                               0::int AS penalty, 0::int AS score
-                        FROM collection_members r
-                        JOIN users u ON u.id = r.user_id
-                        LEFT JOIN submissions s
-                               ON s.user_id = u.id AND s.verdict = 'accepted'
-                              AND s.problem_id IN (
-                                  SELECT problem_id FROM collection_items
-                                  WHERE collection_id = ${col.id} AND kind = 'problem'
-                              )
-                              ${col.endsAt ? sql`AND s.created_at <= ${col.endsAt}` : sql``}
-                        WHERE r.collection_id = ${col.id}
-                        GROUP BY u.id, u.handle, u.display_name
-                        ORDER BY solved DESC, u.handle ASC
-                    `);
+        const rows = await scoreboard(db, {
+            collectionId: col.id,
+            scoring: col.scoring,
+            startsAt: col.startsAt,
+            cutoff,
+            penaltyMinutes: col.penaltyMinutes,
+        });
 
         return c.json({
             collection: col,

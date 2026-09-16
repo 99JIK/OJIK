@@ -2,6 +2,7 @@
     import { page } from "$app/state";
     import { get } from "$lib/api";
     import { session } from "$lib/session.svelte";
+    import { meta } from "$lib/meta.svelte";
     import { verdictClass, verdictText, formatMemory, formatTime, formatDate } from "$lib/format";
     import { VERDICT_LABEL, type Verdict, type SubmissionStatus } from "@ojik/core";
 
@@ -52,6 +53,10 @@
         void load();
     });
 
+    $effect(() => {
+        void meta.ensureLanguages();
+    });
+
     const pending = $derived(
         data ? data.submission.status === "queued" || data.submission.status === "judging" : false,
     );
@@ -84,7 +89,7 @@
         </span>
         <span class="text-zinc-500">{formatTime(s.maxTimeMs)}</span>
         <span class="text-zinc-500">{formatMemory(s.maxMemoryKb)}</span>
-        <span class="text-zinc-500">{s.language}</span>
+        <span class="text-zinc-500">{meta.label(s.language)}</span>
         <span class="text-zinc-500">{formatDate(s.createdAt)}</span>
     </div>
 

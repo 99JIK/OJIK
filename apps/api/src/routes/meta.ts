@@ -67,6 +67,23 @@ export const metaRoutes = new Hono<AuthEnv>()
         );
     })
 
+    /**
+     * 화면용 대기 현황.
+     *
+     * /health 와 값은 같지만 장애 때도 200 을 준다. 헬스체크는 감시 도구가 보는 것이라
+     * 문제가 있으면 503 이어야 하고, 화면은 그때도 숫자를 보여줘야 한다. 용도가 다르다.
+     */
+    .get("/queue", async (c) => {
+        const q = await queueStats(db);
+        const workers = await db.select().from(judgeWorkers);
+        const now = Date.now();
+        const alive = workers.filter((w) => now - w.lastSeenAt.getTime() < 60_000);
+        return c.json({
+            queue: q,
+            workers: alive.map((w) => ({ alive: true, capacity: w.capacity, busy: w.busy })),
+        });
+    })
+
     /** 랭킹. 맞힌 문제 수 기준 */
     .get("/ranking", async (c) => {
         const limit = Math.min(Number(c.req.query("limit") ?? 50), 200);

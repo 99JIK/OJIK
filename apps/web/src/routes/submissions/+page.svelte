@@ -1,9 +1,10 @@
 <script lang="ts">
     import { page } from "$app/state";
-    import { get, post } from "$lib/api.js";
-    import { session } from "$lib/session.svelte.js";
-    import { verdictClass, verdictText, formatMemory, formatTime, formatDate } from "$lib/format.js";
-    import type { SubmissionRow } from "$lib/types.js";
+    import { get, post } from "$lib/api";
+    import { session } from "$lib/session.svelte";
+    import { meta, queue } from "$lib/meta.svelte";
+    import { verdictClass, verdictText, formatMemory, formatTime, formatDate } from "$lib/format";
+    import type { SubmissionRow } from "$lib/types";
 
     const problemId = $derived(page.url.searchParams.get("problemId") ?? "");
     const handle = $derived(page.url.searchParams.get("handle") ?? "");
@@ -40,6 +41,12 @@
         void load();
     });
 
+    // 언어 이름을 c 가 아니라 C17 로 보여주기 위해 한 번 받아 둔다
+    $effect(() => {
+        void meta.ensureLanguages();
+        void queue.refresh();
+    });
+
     $effect(() => {
         if (!pending) return;
         const t = setInterval(load, 1000);
@@ -57,9 +64,21 @@
         채점 현황
         {#if problemId}<span class="ml-2 text-sm font-normal text-zinc-500">문제 {problemId}</span>{/if}
     </h1>
-    {#if pending}
-        <span class="text-sm text-blue-600 dark:text-blue-400">갱신 중</span>
-    {/if}
+    <div class="flex items-center gap-3 text-sm">
+        {#if queue.loaded && (queue.queued > 0 || queue.judging > 0)}
+            <span class="text-zinc-500">
+                대기 {queue.queued}건{queue.judging > 0 ? ` · 채점 중 ${queue.judging}건` : ""}
+            </span>
+        {/if}
+        {#if queue.stalled}
+            <span class="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
+                채점기 응답 없음
+            </span>
+        {/if}
+        {#if pending}
+            <span class="text-blue-600 dark:text-blue-400">갱신 중</span>
+        {/if}
+    </div>
 </div>
 
 {#if error}
@@ -99,7 +118,7 @@
                         </td>
                         <td class="text-right tabular-nums text-zinc-500">{formatTime(r.maxTimeMs)}</td>
                         <td class="text-right tabular-nums text-zinc-500">{formatMemory(r.maxMemoryKb)}</td>
-                        <td class="text-zinc-500">{r.language}</td>
+                        <td class="text-zinc-500">{meta.label(r.language)}</td>
                         <td class="text-zinc-500">{formatDate(r.createdAt)}</td>
                         {#if session.isStaff}
                             <td>

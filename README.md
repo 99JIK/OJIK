@@ -144,13 +144,20 @@ npm run dev:worker
 
 | 명령 | 용도 |
 |---|---|
-| `npm test` | 판정 규칙 + 큐 동작. PostgreSQL 필요 |
+| `npm test` | 판정 규칙, 큐 동작, 순위표. PostgreSQL 필요. **워커를 멈추고 돌릴 것** |
 | `npm run test:unit` | 판정 규칙만. DB 불필요 |
 | `npm run typecheck` | 전 패키지 |
 | `npm run smoke:judge` | isolate가 실물에서 도는지 확인 |
 | `npm run check:data` | DB의 해시와 테스트케이스 파일 대조 |
 | `npm run recount` | 캐시 컬럼 정정. `-- --apply`로 실제 반영 |
 | `npm run set-role` | 사용자 권한 변경 |
+
+### 테스트 주의
+
+**`npm test` 는 워커를 멈추고 돌려야 합니다.** 테스트가 만든 제출을 워커가 가로채면 결과가
+흔들립니다. 워커가 떠 있으면 테스트가 시작하면서 거부하고 이유를 알려 줍니다.
+
+테스트는 `submissions` 테이블을 비웁니다. 개발 DB 에서만 돌리세요.
 
 ### 운영 시 주의
 

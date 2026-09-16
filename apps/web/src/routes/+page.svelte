@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { get } from "$lib/api.js";
-    import { acceptRate } from "$lib/format.js";
-    import type { ProblemSummary } from "$lib/types.js";
+    import { get } from "$lib/api";
+    import { acceptRate } from "$lib/format";
+    import type { ProblemSummary } from "$lib/types";
 
     let q = $state("");
     let offset = $state(0);
