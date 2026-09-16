@@ -147,7 +147,9 @@ npm run dev:worker
 | `npm test` | 판정 규칙, 큐 동작, 순위표. PostgreSQL 필요. **워커를 멈추고 돌릴 것** |
 | `npm run test:unit` | 판정 규칙만. DB 불필요 |
 | `npm run typecheck` | 전 패키지 |
-| `npm run smoke:judge` | isolate가 실물에서 도는지 확인 |
+| `npm run smoke:judge` | isolate가 실물에서 도는지 확인. 등록된 전 언어를 한 번씩 돌림 |
+| `npm run langs` | 지금 등록된 채점 언어와 필요한 러너 이미지 |
+| `npm run e2e:submit` | 전 언어를 API 로 실제 제출해 판정까지 확인. API 와 워커 필요 |
 | `npm run check:data` | DB의 해시와 테스트케이스 파일 대조 |
 | `npm run recount` | 캐시 컬럼 정정. `-- --apply`로 실제 반영 |
 | `npm run set-role` | 사용자 권한 변경 |
@@ -209,16 +211,29 @@ npm run db:migrate       # 4. 적용
 ### 언어 추가
 
 [`packages/core/src/languages.ts`](packages/core/src/languages.ts)에 항목 하나를 넣습니다.
-API 검증, 워커 실행, 프론트 선택지, PG enum이 전부 여기서 나옵니다.
+API 검증, 워커 실행, 프론트 선택지, PG enum이 전부 여기서 나옵니다. 지금 뭐가 있는지는
+`npm run langs`로 봅니다. 이 문서에 목록을 적어 두지 않는 건 반드시 어긋나기 때문입니다.
+
+**같은 런타임에 플래그만 다른 언어는 비용이 거의 없습니다.** C++17과 C99가 그런 경우로,
+`c-cpp` 이미지를 그대로 쓰고 컴파일 argv만 다릅니다. 이미지가 안 늘어나니 부담 없이 늘릴 수
+있습니다. 반대로 새 런타임은 이미지 하나와 디스크를 더 씁니다.
+
+새 문법 강조가 필요하면 `EditorMode`에 먼저 값을 더합니다. 안 더하면 에디터가 조용히 C++
+문법으로 떨어집니다.
 
 새 런타임이 필요하면 [`images/runner/`](images/runner/)에 `Dockerfile.<runner>`를 추가하고
 `RunnerId`에 이름을 더합니다.
 
 ```bash
 npm run db:generate      # language enum 에 값이 추가되므로 마이그레이션 필요
-npm run runners:build
-npm run smoke:judge
+npm run db:migrate
+npm run runners:build    # 새 런타임을 넣었을 때만
+npm run smoke:judge      # 샌드박스에서 도는지
+npm run e2e:submit       # 제출부터 판정까지 실제 경로로
 ```
+
+**`db:generate` 를 잊으면 제출이 INSERT 에서 깨집니다.** `smoke:judge` 는 DB 를 안 거쳐서 이걸
+못 잡습니다. `npm test` 의 enum 테스트와 `e2e:submit` 이 잡습니다.
 
 ### 커밋
 
@@ -260,6 +275,55 @@ git push origin main --follow-tags
 GitHub의 릴리스 목록이 비어 보입니다.
 
 태그는 **주석 태그**(`-a`)로 만듭니다. 가벼운 태그는 작성자와 날짜가 안 남습니다.
+
+### v0.2.0 (2026-09-16) 화면 보강과 언어 확장
+
+v0.1.0 은 채점은 됐지만 브라우저로 할 수 있는 일이 적었습니다. 문제 등록이 API 직접 호출이라
+사실상 쓸 수 없었고, 문제 본문이 평문이라 수식이 든 문제를 낼 수 없었습니다. 그 둘을 막고
+채점 언어를 4종에서 8종으로 늘렸습니다.
+
+**화면**
+
+- 관리 화면. 문제 등록과 수정, 테스트케이스 편집, 컬렉션 구성, 권한 변경
+- 마크다운 렌더링. 표, 코드 블록, LaTeX 수식, mermaid 도식
+- 순위표 화면. 진도, ICPC, IOI 세 규칙과 동결 반영
+- 제출 실패 시 어느 케이스에서 틀렸는지 표시 (공개 케이스에 한함)
+
+**채점**
+
+- C++17, C99 추가. `c-cpp` 이미지를 그대로 쓰고 컴파일 플래그만 다름
+- PyPy3 추가. 같은 파이썬 풀이가 CPython 으로는 시간 초과인 경우를 통과시킴
+- Node.js 22 추가
+- 러너 지연 기동. 해당 언어의 첫 제출까지 컨테이너를 안 띄움. 기동 시 5개에서 1개로
+- 워커 등록에 pid 를 남겨, 같은 호스트에서 죽은 워커의 자리를 즉시 넘겨받음
+
+**검증**
+
+- 자동 테스트 51건 (판정 11, 큐 10, 순위표 10, 마크다운 13, enum 대조 7)
+- `smoke:judge` 41건. 등록된 전 언어를 정상, 시간 초과, 컴파일 오류로 한 번씩 실행
+- `e2e:submit` 추가. 전 언어를 API 로 실제 제출해 판정까지 확인
+
+**고친 것**
+
+- 순위표가 500 을 내던 문제. `Date` 를 raw SQL 인자로 넘기면 postgres-js 가 직렬화하지 못함
+- 큐에서 꺼낸 행의 키가 snake_case 로 와서 워커가 문제 id 를 못 읽던 문제. 채점이 전혀 안 됐음
+- 사라진 러너 컨테이너를 워커가 자동 복구하려다 409 가 연쇄로 나던 문제. 자동 복구를 뺌
+- `editorMode` 유니온을 웹이 따로 들고 있어, 언어를 늘려도 타입이 안 걸리던 문제
+- 늘린 언어 4종의 PG enum 마이그레이션이 빠져 있던 문제. 그 언어로 제출하면 INSERT 에서 깨졌음
+
+**마이그레이션**
+
+```bash
+npm run db:migrate       # judge_workers.pid, language enum 값 4개
+npm run runners:build    # pypy, node 이미지 추가
+```
+
+**알려진 한계**
+
+- 이메일 인증 없음. 가입 시 주소 소유를 확인하지 않음
+- 부분점수와 스페셜 저지는 스키마만 있고 화면과 채점 경로가 없음
+- SVG 그림판 미구현. 도식은 mermaid 로만
+- 학교 그룹, 풀이 공유, GitHub Actions CI 미구현
 
 ### v0.1.0 (2026-09-16) 최초 구현
 

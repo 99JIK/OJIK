@@ -25,6 +25,8 @@
         "infra:down": "docker compose down",
         "runners:build": "tsx scripts/build-runners.ts",
         "smoke:judge": "tsx scripts/smoke-judge.ts",
+        "langs": "tsx scripts/langs.ts",
+        "e2e:submit": "tsx scripts/e2e-submit.ts",
         "check:data": "tsx scripts/check-data.ts",
         "recount": "tsx scripts/recount.ts",
         "set-role": "tsx scripts/set-role.ts"

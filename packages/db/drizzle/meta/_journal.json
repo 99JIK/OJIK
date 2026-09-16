@@ -15,6 +15,13 @@
       "when": 1789534385694,
       "tag": "0001_worker_pid",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789535726245,
+      "tag": "0002_lang_expand",
+      "breakpoints": true
     }
   ]
 }
