@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { pgTable, serial, text, integer, boolean, timestamp, index, primaryKey, doublePrecision, uniqueIndex } from "drizzle-orm/pg-core";
-import { checkerTypeEnum } from "./enums";
+import { checkerTypeEnum, problemKindEnum, languageEnum } from "./enums";
 import { users } from "./users";
 
 export const problems = pgTable(
@@ -26,6 +26,25 @@ export const problems = pgTable(
         /** 첫 오답에서 남은 테스트케이스를 중단할지. BOJ 기본 동작.
          *  대회 부분점수 문제는 false 로 둬야 점수가 나온다 */
         stopOnFirstFail: boolean().notNull().default(true),
+
+        /**
+         * 문제 유형. 채점 경로가 갈린다.
+         *
+         *   code    샌드박스에서 돌린다
+         *   blank   빈칸을 채워 완성한 뒤 code 와 같은 길로 간다
+         *   answer  채점기를 안 탄다. API 가 답을 기댓값과 바로 비교한다
+         *
+         * 셋 다 테스트케이스 표를 그대로 쓴다. answer 에서는 input 이 문항 지문,
+         * output 이 기대 답이다
+         */
+        kind: problemKindEnum().notNull().default("code"),
+
+        /** kind=blank 일 때 원본 코드. 비운 줄은 여기 그대로 있고 blankLines 로만 가린다 */
+        blankTemplate: text(),
+        /** kind=blank 일 때 비울 줄 번호. 1 부터 센다. 사람이 에디터에서 보는 번호와 맞춘다 */
+        blankLines: integer().array(),
+        /** kind=blank 일 때 어느 언어로 채점할지. 학생이 언어를 고를 수 없다 */
+        blankLanguage: languageEnum(),
 
         isPublic: boolean().notNull().default(false),
         /** 대회 문제를 대회 종료 전까지 감출 때 씀. null 이면 isPublic 만 본다 */

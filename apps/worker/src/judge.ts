@@ -11,6 +11,7 @@ import {
     type Verdict,
     type LanguageSpec,
     type StepLimits,
+    check,
 } from "@ojik/core";
 import {
     problems,
@@ -27,7 +28,7 @@ import { config } from "./config";
 import { log } from "./log";
 import { RunnerPool, type Box } from "./pool";
 import * as isolate from "./isolate";
-import { check } from "./checker";
+
 
 /** 컨테이너 안에서 본 박스 부속 파일 경로. meta 는 박스 밖이라야 제출 코드가 못 건드린다 */
 function containerPath(box: Box, name: string): string {

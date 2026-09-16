@@ -96,8 +96,33 @@ export const JOIN_POLICY_LABEL: Record<JoinPolicy, string> = {
 export const ITEM_KINDS = ["problem", "text"] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
 
-export const MEMBER_ROLES = ["member", "manager"] as const;
+/**
+ * 컬렉션 안에서의 역할.
+ *
+ * 전역 역할과 별개다. 전역이 사용자여도 특정 강의에서는 조교일 수 있고, 전역 출제자여도
+ * 남의 강의에서는 수강생이다. 강의를 여는 데만 전역 instructor 가 필요하고, 그 뒤로는
+ * 여기 적힌 역할이 그 강의의 권한을 정한다.
+ *
+ *   member   수강생. 문제를 푼다
+ *   ta       조교. 명단과 진도를 보고 문제를 고친다. 명단과 구성은 못 바꾼다
+ *   manager  공동 운영자. 컬렉션 설정, 항목, 명단까지 전부
+ *
+ * 만든 사람(collections.ownerId)은 manager 로 치고 지우기까지 할 수 있다. 여기에 owner 를
+ * 넣지 않는 건, 멤버 표에 안 들어간 사람도 만든 사람일 수 있어서다.
+ */
+export const MEMBER_ROLES = ["member", "ta", "manager"] as const;
 export type MemberRole = (typeof MEMBER_ROLES)[number];
+
+export const MEMBER_ROLE_LABEL: Record<MemberRole, string> = {
+    member: "수강생",
+    ta: "조교",
+    manager: "공동 운영자",
+};
+
+/** 조교 이상인지. 명단과 진도를 보고 문제를 고칠 수 있다 */
+export function canAssist(role: MemberRole | null | undefined): boolean {
+    return role === "ta" || role === "manager";
+}
 
 /** ICPC 오답 1회당 붙는 페널티 분. 관례값이지 표준이 아니다 */
 export const DEFAULT_PENALTY_MINUTES = 20;
