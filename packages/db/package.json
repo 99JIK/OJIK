@@ -1,0 +1,25 @@
+{
+    "name": "@ojik/db",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./schema": "./src/schema/index.ts"
+    },
+    "scripts": {
+        "generate": "drizzle-kit generate",
+        "migrate": "tsx src/migrate.ts",
+        "studio": "drizzle-kit studio",
+        "seed": "tsx src/seed.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@ojik/core": "*",
+        "drizzle-orm": "^0.38.3",
+        "postgres": "^3.4.5"
+    },
+    "devDependencies": {
+        "drizzle-kit": "^0.30.1"
+    }
+}

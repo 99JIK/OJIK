@@ -1,0 +1,37 @@
+{
+    "name": "ojik",
+    "private": true,
+    "type": "module",
+    "workspaces": [
+        "packages/*",
+        "apps/*"
+    ],
+    "engines": {
+        "node": ">=22"
+    },
+    "scripts": {
+        "dev:api": "npm -w @ojik/api run dev",
+        "dev:worker": "npm -w @ojik/worker run dev",
+        "dev:web": "npm -w @ojik/web run dev",
+        "build": "npm -ws --if-present run build",
+        "typecheck": "npm -ws --if-present run typecheck",
+        "test": "node --import tsx --test tests/*.test.ts",
+        "test:unit": "node --import tsx --test tests/checker.test.ts",
+        "db:generate": "npm -w @ojik/db run generate",
+        "db:migrate": "npm -w @ojik/db run migrate",
+        "db:seed": "npm -w @ojik/db run seed",
+        "db:studio": "npm -w @ojik/db run studio",
+        "infra:up": "docker compose up -d",
+        "infra:down": "docker compose down",
+        "runners:build": "tsx scripts/build-runners.ts",
+        "smoke:judge": "tsx scripts/smoke-judge.ts",
+        "check:data": "tsx scripts/check-data.ts",
+        "recount": "tsx scripts/recount.ts",
+        "set-role": "tsx scripts/set-role.ts"
+    },
+    "devDependencies": {
+        "typescript": "^5.7.3",
+        "tsx": "^4.19.2",
+        "prettier": "^3.4.2"
+    }
+}

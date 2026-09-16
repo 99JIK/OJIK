@@ -1,0 +1,118 @@
+<script lang="ts">
+    import { page } from "$app/state";
+    import { get, post } from "$lib/api.js";
+    import { session } from "$lib/session.svelte.js";
+    import { verdictClass, verdictText, formatMemory, formatTime, formatDate } from "$lib/format.js";
+    import type { SubmissionRow } from "$lib/types.js";
+
+    const problemId = $derived(page.url.searchParams.get("problemId") ?? "");
+    const handle = $derived(page.url.searchParams.get("handle") ?? "");
+
+    let rows = $state<SubmissionRow[]>([]);
+    let error = $state<string | null>(null);
+    let loaded = $state(false);
+
+    async function load() {
+        try {
+            const r = await get<{ submissions: SubmissionRow[] }>("/submissions", {
+                problemId,
+                handle,
+                limit: 50,
+            });
+            rows = r.submissions;
+            error = null;
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            loaded = true;
+        }
+    }
+
+    /**
+     * 채점이 끝나지 않은 행이 있을 때만 다시 물어본다.
+     * 전부 끝났으면 폴링을 멈춘다. 가만히 보고 있는 화면이 서버를 계속 두드릴 이유가 없다.
+     */
+    const pending = $derived(rows.some((r) => r.status === "queued" || r.status === "judging"));
+
+    $effect(() => {
+        void problemId;
+        void handle;
+        void load();
+    });
+
+    $effect(() => {
+        if (!pending) return;
+        const t = setInterval(load, 1000);
+        return () => clearInterval(t);
+    });
+
+    async function rejudge(id: number) {
+        await post(`/submissions/${id}/rejudge`);
+        void load();
+    }
+</script>
+
+<div class="flex items-center justify-between">
+    <h1 class="text-xl font-bold">
+        채점 현황
+        {#if problemId}<span class="ml-2 text-sm font-normal text-zinc-500">문제 {problemId}</span>{/if}
+    </h1>
+    {#if pending}
+        <span class="text-sm text-blue-600 dark:text-blue-400">갱신 중</span>
+    {/if}
+</div>
+
+{#if error}
+    <p class="mt-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">{error}</p>
+{:else if !loaded}
+    <p class="mt-6 text-sm text-zinc-500">불러오는 중...</p>
+{:else}
+    <div class="mt-4 overflow-x-auto">
+        <table class="ojik-table w-full min-w-[720px] text-sm">
+            <thead class="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
+                <tr>
+                    <th class="w-20 font-medium">번호</th>
+                    <th class="w-28 font-medium">아이디</th>
+                    <th class="font-medium">문제</th>
+                    <th class="w-36 font-medium">결과</th>
+                    <th class="w-20 text-right font-medium">시간</th>
+                    <th class="w-24 text-right font-medium">메모리</th>
+                    <th class="w-20 font-medium">언어</th>
+                    <th class="w-32 font-medium">제출 시각</th>
+                    {#if session.isStaff}<th class="w-20"></th>{/if}
+                </tr>
+            </thead>
+            <tbody>
+                {#each rows as r (r.id)}
+                    <tr class="border-b border-zinc-100 dark:border-zinc-900">
+                        <td class="tabular-nums text-zinc-500">
+                            <a href="/submission/{r.id}" class="hover:underline">{r.id}</a>
+                        </td>
+                        <td>
+                            <a href="/submissions?handle={r.handle}" class="hover:underline">{r.handle}</a>
+                        </td>
+                        <td>
+                            <a href="/problem/{r.problemId}" class="hover:underline">{r.problemTitle}</a>
+                        </td>
+                        <td class="{verdictClass(r.verdict, r.status)}">
+                            {verdictText(r.verdict, r.status, r.judgedCount, r.totalCount)}
+                        </td>
+                        <td class="text-right tabular-nums text-zinc-500">{formatTime(r.maxTimeMs)}</td>
+                        <td class="text-right tabular-nums text-zinc-500">{formatMemory(r.maxMemoryKb)}</td>
+                        <td class="text-zinc-500">{r.language}</td>
+                        <td class="text-zinc-500">{formatDate(r.createdAt)}</td>
+                        {#if session.isStaff}
+                            <td>
+                                <button onclick={() => rejudge(r.id)} class="text-xs text-blue-600 hover:underline dark:text-blue-400">
+                                    재채점
+                                </button>
+                            </td>
+                        {/if}
+                    </tr>
+                {:else}
+                    <tr><td colspan="9" class="py-8 text-center text-zinc-400">제출이 없습니다</td></tr>
+                {/each}
+            </tbody>
+        </table>
+    </div>
+{/if}

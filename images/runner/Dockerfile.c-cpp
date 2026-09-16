@@ -1,0 +1,12 @@
+ARG BASE=ojik-runner-base:latest
+FROM ${BASE}
+
+# -static 링크에 필요한 libc 정적 라이브러리가 build-essential 에 같이 온다.
+# 정적 링크로 두는 이유는 실행 박스에 동적 링커와 공유 라이브러리를 열어 줄 필요가 없어서다.
+# isolate 의 --dir 설정이 그만큼 단순해지고, 라이브러리 교체로 판정이 바뀌는 일도 없다
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gcc g++ libc6-dev; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN gcc --version && g++ --version

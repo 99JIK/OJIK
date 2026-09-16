@@ -1,0 +1,69 @@
+# 러너 공통 바탕. isolate 만 들어 있고 컴파일러는 언어별 이미지가 얹는다.
+#
+# KOJ 는 gcc, g++, JDK24, python, node, strace 를 한 이미지에 다 넣고 제출마다 그걸 띄웠다.
+# 여기서는 언어별로 쪼개서, 파이썬 제출이 JDK 를 끌고 다니지 않게 한다.
+#
+# 모든 러너가 같은 바탕을 써야 한다. isolate 를 한 번 빌드해 공유하려면 glibc 가 같아야 하고,
+# 베이스가 갈리면 "다른 배포판에서 빌드한 바이너리라 안 뜬다"를 디버깅하게 된다.
+
+ARG DEBIAN_BASE=debian:trixie-slim
+
+FROM ${DEBIAN_BASE} AS isolate-build
+
+# 2.x 를 쓴다. 1.x 는 cgroup v1 전용이라 요즘 커널(Debian 12+, Docker Desktop WSL2)에서
+# "Failed to create control group /sys/fs/cgroup/memory/box-0/" 로 죽는다.
+# 버전을 올릴 때는 반드시 npm run smoke:judge 를 먼저 통과시킬 것.
+ARG ISOLATE_VERSION=v2.7
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential git libcap-dev libseccomp-dev pkg-config ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN git clone --depth 1 --branch ${ISOLATE_VERSION} https://github.com/ioi/isolate.git .
+RUN make isolate isolate-check-environment
+
+FROM ${DEBIAN_BASE}
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libcap2 libseccomp2 ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=isolate-build /src/isolate /usr/local/bin/isolate
+COPY --from=isolate-build /src/isolate-check-environment /usr/local/bin/isolate-check-environment
+
+# setuid root. 컨테이너를 privileged 로 띄우므로 실제로 필요하진 않지만,
+# isolate 가 자기 권한을 확인하는 경로가 있어 맞춰 둔다
+RUN chmod 4755 /usr/local/bin/isolate
+
+# 설정 항목은 버전마다 다르다. 2.x 는 lock_root 를 요구하고 1.x 는 그걸 모른다.
+# 기본 템플릿(default.cf.in)은 cg_root 를 auto: 로 두고 isolate-cg-keeper 데몬을 전제하는데,
+# 컨테이너에는 systemd 가 없으므로 명시 경로로 바꾸고 entrypoint 에서 그 cgroup 을 만든다.
+#
+# box_root 는 워커가 호스트에서 bind mount 하는 자리다. 워커와 이 값이 어긋나면
+# 채점은 도는데 워커가 결과 파일을 못 찾는 상태가 된다.
+RUN set -eux; \
+    mkdir -p /var/local/lib/isolate /run/isolate/locks; \
+    printf '%s\n' \
+        'box_root = /var/local/lib/isolate' \
+        'lock_root = /run/isolate/locks' \
+        'cg_root = /sys/fs/cgroup/isolate' \
+        'first_uid = 60000' \
+        'first_gid = 60000' \
+        'num_boxes = 1000' \
+        > /usr/local/etc/isolate; \
+    # 설정이 이 버전에서 온전한지 빌드에서 본다. 첫 제출에서 알게 되는 것보다 낫다.
+    # --check-config 는 문제를 stderr 로만 알리고 종료 코드는 0 이라 출력을 직접 본다
+    out=$(isolate --check-config 2>&1); \
+    if [ -n "$out" ]; then echo "isolate 설정 오류: $out"; exit 1; fi; \
+    echo "isolate 설정 검증 통과"
+
+COPY --chmod=755 entrypoint.sh /usr/local/bin/ojik-runner-init
+
+# entrypoint 가 cgroup 위임을 마친 뒤 인자를 exec 한다.
+# 워커는 Cmd 로 sleep infinity 를 주는데, entrypoint 는 그대로 유지된다
+ENTRYPOINT ["/usr/local/bin/ojik-runner-init"]
+CMD ["sleep", "infinity"]

@@ -1,0 +1,20 @@
+{
+    "compilerOptions": {
+        "target": "ES2023",
+        "lib": ["ES2023"],
+        // tsx 와 vite 로만 돌린다. node 가 이 파일들을 직접 읽지 않으므로 bundler 해석을 쓴다.
+        // NodeNext 로 두면 상대 import 에 .js 확장자를 붙여야 하는데, drizzle-kit 의 스키마
+        // 로더가 그 확장자를 .ts 로 치환하지 못해 마이그레이션 생성이 깨진다
+        "module": "preserve",
+        "moduleResolution": "bundler",
+        "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "noImplicitOverride": true,
+        "verbatimModuleSyntax": true,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "sourceMap": true
+    }
+}

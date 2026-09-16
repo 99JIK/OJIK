@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.svelte-kit/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+
+data/
+var/
+*.log
+
+.DS_Store

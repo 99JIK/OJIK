@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+/* 다크 모드는 클래스로 전환한다. next-themes 같은 라이브러리를 안 쓰고
+   localStorage 값을 읽어 <html> 에 .dark 를 붙인다 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+    --font-sans: "Pretendard Variable", Pretendard, -apple-system, system-ui, sans-serif;
+    --font-mono: "D2Coding", "JetBrains Mono", Consolas, monospace;
+}
+
+html {
+    color-scheme: light dark;
+}
+
+/**
+ * 목록 표 공통 스타일.
+ *
+ * 셀 가로 여백을 화면마다 따로 적으면 반드시 어딘가 빠진다. 실제로 오른쪽 정렬한 메모리 열과
+ * 왼쪽 정렬한 언어 열이 붙어서 "메모리언어", "-c" 로 읽히는 상태였다.
+ * 여백은 여기서만 정하고 화면은 oj-table 을 붙이기만 한다.
+ */
+@layer components {
+    .ojik-table th,
+    .ojik-table td {
+        padding-inline: calc(var(--spacing) * 3);
+        padding-block: calc(var(--spacing) * 2);
+    }
+
+    /* 바깥쪽 여백은 없앤다. 표가 본문 좌우 기준선에 맞아야 한다 */
+    .ojik-table th:first-child,
+    .ojik-table td:first-child {
+        padding-inline-start: 0;
+    }
+
+    .ojik-table th:last-child,
+    .ojik-table td:last-child {
+        padding-inline-end: 0;
+    }
+}

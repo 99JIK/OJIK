@@ -1,0 +1,274 @@
+# OJIK 오직
+
+온라인 저지입니다. 문제를 풀고 제출하면 샌드박스 안에서 채점합니다.
+교재, 문제집, 대회, 코딩 테스트를 하나의 구조로 다룹니다.
+
+이름은 **OJ**(Online Judge)에 만든 사람 핸들을 이어 붙인 것이고, 한국어로 **오직**으로 읽힙니다.
+
+---
+
+## 목차
+
+- [구조](#구조)
+- [설계 원칙](#설계-원칙)
+- [운영](#운영)
+- [개발](#개발)
+- [변경 이력](#변경-이력)
+
+---
+
+## 구조
+
+### 저장소 구성
+
+```
+packages/core      모든 패키지가 참조하는 단일 출처
+packages/db        Drizzle 스키마, 마이그레이션, 채점 큐 연산
+apps/api           Hono REST API
+apps/worker        채점 오케스트레이터
+apps/web           SvelteKit SPA
+images/runner      언어별 채점 런타임 이미지
+scripts            운영 스크립트
+tests              판정 규칙과 큐 동작 테스트
+```
+
+전부 TypeScript입니다. **러너 컨테이너 안에는 우리 코드가 한 줄도 없습니다.** 컴파일러와
+`isolate`뿐이고, 채점 로직은 워커 프로세스에 있습니다.
+
+### 실행 구조
+
+```mermaid
+flowchart LR
+    U[브라우저]
+    W["apps/web"]
+    A["apps/api"]
+    DB[("PostgreSQL<br/>도메인 데이터 + 채점 큐")]
+    K["apps/worker"]
+    R["러너 컨테이너<br/>isolate + 컴파일러"]
+    FS[("DATA_DIR<br/>테스트케이스")]
+
+    U --> W --> A
+    A -->|"INSERT = 큐 등록"| DB
+    A -.->|"NOTIFY"| K
+    K -->|"SKIP LOCKED 로 꺼냄"| DB
+    K -->|"docker exec isolate"| R
+    A -->|쓰기| FS
+    FS -->|"읽기 전용 mount"| R
+```
+
+**메시지 큐가 없습니다.** 제출 테이블이 곧 큐입니다.
+
+### 컬렉션
+
+교재, 문제집, 대회, 코딩 테스트를 각각의 타입으로 두지 않습니다. 넷의 차이는 **정책 축의 값**뿐이라
+`collections` 한 테이블로 다룹니다.
+
+| | 시간 창 | 결과 공개 | 순위 | 참가 | 본문 |
+|---|---|---|---|---|---|
+| **교재** | 없음 | 즉시 | 없음 | 공개 | 설명 + 문제 |
+| **문제집** | 기한(선택) | 즉시 | 진도 | 멤버 | 문제만 |
+| **대회** | 고정 | 동결 | ICPC/IOI | 등록 | 문제만 |
+| **코딩 테스트** | 개인별 | 종료 후 | 없음 | 초대 | 문제만 |
+
+화면에서는 프리셋 버튼이 축 값을 채워 주므로 사용자는 축의 존재를 몰라도 됩니다.
+정의는 [`packages/core/src/collections.ts`](packages/core/src/collections.ts)에 있습니다.
+
+### 문서
+
+| 문서 | 내용 |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | 전체 구조, 제출부터 판정까지의 흐름, 컴포넌트 간 계약 |
+| [`docs/judge-pipeline.md`](docs/judge-pipeline.md) | 큐 설계, 상주 러너 풀, 보안 경계, 판정 규칙 |
+| [`docs/schema.md`](docs/schema.md) | 테이블 구조와 인덱스 설계 근거 |
+| [`docs/development.md`](docs/development.md) | 로컬 실행, 흔한 문제 |
+| [`docs/koj-differences.md`](docs/koj-differences.md) | 참고한 KOJ에서 무엇을 왜 바꿨는지 |
+
+---
+
+## 설계 원칙
+
+- **단일 출처.** 언어 목록은 [`languages.ts`](packages/core/src/languages.ts) 한 곳에만 있습니다.
+  API 검증, 워커 실행, 프론트 선택지, PG enum이 전부 여기서 나옵니다.
+- **조용한 실패 금지.** 설정 파싱에 실패하면 프로세스가 즉시 종료합니다. 지원하지 않는 언어는
+  제출 단계에서 거부합니다. 빈 설정으로 계속 진행하지 않습니다.
+- **복사하지 않기.** 테스트케이스는 러너 컨테이너에 읽기 전용으로 붙습니다. 제출마다 복사하지
+  않습니다.
+- **판정과 상태의 분리.** `status`는 채점이 어디까지 갔는지, `verdict`는 결과입니다. 시간 초과가
+  오답으로 뭉개지지 않습니다.
+- **재현 가능성이 저장보다 싸다.** 케이스별 출력을 다 저장하는 대신 소스와 테스트케이스를 남겨
+  언제든 다시 채점합니다.
+
+---
+
+## 운영
+
+### 필요한 것
+
+| 항목 | 비고 |
+|---|---|
+| Node 22 이상 | `process.loadEnvFile`을 씁니다 |
+| Docker | PostgreSQL과 러너 컨테이너 |
+| 리눅스 커널 | `isolate`가 cgroup v2를 직접 씁니다. Windows와 macOS는 Docker의 리눅스 VM으로 충족됩니다 |
+
+컨테이너 런타임은 Docker Desktop, OrbStack, colima, 리눅스 네이티브 Docker 어느 쪽이든 됩니다.
+워커가 플랫폼에 맞는 접속 지점을 자동으로 고릅니다.
+
+### 첫 설치
+
+```bash
+cp .env.example .env
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# 출력값을 .env 의 JWT_SECRET 에 넣습니다
+
+npm install
+npm run infra:up          # PostgreSQL
+npm run db:migrate
+npm run db:seed           # 개발용 계정과 예시 데이터
+
+npm run runners:build     # 러너 이미지. 처음엔 몇 분 걸립니다
+npm run smoke:judge       # 이게 통과해야 채점이 됩니다
+```
+
+**호스트 포트는 5432가 아니라 55432입니다.** 개발 PC에 PostgreSQL이 이미 깔려 있으면 5432를
+그쪽이 잡고 있어서 연결이 그리로 갑니다. `POSTGRES_PORT`로 바꿀 수 있습니다.
+
+### 실행
+
+```bash
+npm run dev:api           # :3000
+npm run dev:web           # :5173
+npm run dev:worker
+```
+
+### 명령
+
+| 명령 | 용도 |
+|---|---|
+| `npm test` | 판정 규칙 + 큐 동작. PostgreSQL 필요 |
+| `npm run test:unit` | 판정 규칙만. DB 불필요 |
+| `npm run typecheck` | 전 패키지 |
+| `npm run smoke:judge` | isolate가 실물에서 도는지 확인 |
+| `npm run check:data` | DB의 해시와 테스트케이스 파일 대조 |
+| `npm run recount` | 캐시 컬럼 정정. `-- --apply`로 실제 반영 |
+| `npm run set-role` | 사용자 권한 변경 |
+
+### 운영 시 주의
+
+**워커를 여럿 띄우려면 `WORKER_ID`와 `BOX_ID_BASE`를 워커마다 달리 줘야 합니다.**
+같은 값이면 서로의 러너 컨테이너를 지우며 채점을 망칩니다. 같은 `WORKER_ID`로 두 번째 워커가
+뜨면 거부되지만, `BOX_ID_BASE`가 겹치면 샌드박스 uid가 겹쳐 간헐적으로 실패합니다.
+
+**`WORKER_CAPACITY * WORKER_TC_PARALLEL`이 CPU 코어 수를 넘으면 안 됩니다.** 넘으면 측정 시간이
+부풀어 맞는 풀이가 시간 초과로 떨어집니다.
+
+**성능 코어와 효율 코어가 섞인 CPU에서는 시간 측정이 흔들립니다.** 시간 제한을 넉넉히 잡거나,
+그 환경에서 빡빡한 문제를 내지 않아야 합니다.
+
+**러너 이미지나 isolate 버전을 올릴 때는 `npm run smoke:judge`를 먼저 통과시키세요.**
+버전이 갈리면 플래그가 안 맞아 전 제출이 채점 오류가 됩니다.
+
+**문제는 지우지 말고 비공개로 내리세요.** 삭제하면 제출 기록이 함께 사라집니다.
+
+### 데이터
+
+| 대상 | 위치 | 비고 |
+|---|---|---|
+| 도메인 데이터, 제출, 채점 결과 | PostgreSQL | |
+| 테스트케이스 파일 | `DATA_DIR/problems/{id}/tc/` | DB는 sha256만 들고 있음 |
+| 채점 작업 공간 | `BOX_ROOT` | 휘발성. tmpfs 권장 |
+
+DB와 `DATA_DIR`은 **같은 시점으로 함께 백업**해야 합니다. 따로 되돌리면 행은 있고 파일이 없는
+상태가 되는데, `npm run check:data`가 그걸 잡아냅니다.
+
+---
+
+## 개발
+
+### 스키마 변경
+
+```bash
+# 1. packages/db/src/schema/ 를 고친다
+npm run db:generate      # 2. 마이그레이션 SQL 생성
+# 3. 생성된 packages/db/drizzle/*.sql 을 읽어 본다
+npm run db:migrate       # 4. 적용
+# 5. SQL 파일과 스냅샷을 함께 커밋
+```
+
+**생성된 SQL을 읽지 않고 넘기지 마세요.** 컬럼 이름을 바꾸면 drizzle-kit이 `drop` + `add`로
+해석해 데이터가 날아갈 수 있습니다.
+
+기동 시 자동 마이그레이션은 하지 않습니다. 배포와 스키마 변경을 분리해야 되돌릴 수 있습니다.
+
+### 언어 추가
+
+[`packages/core/src/languages.ts`](packages/core/src/languages.ts)에 항목 하나를 넣습니다.
+API 검증, 워커 실행, 프론트 선택지, PG enum이 전부 여기서 나옵니다.
+
+새 런타임이 필요하면 [`images/runner/`](images/runner/)에 `Dockerfile.<runner>`를 추가하고
+`RunnerId`에 이름을 더합니다.
+
+```bash
+npm run db:generate      # language enum 에 값이 추가되므로 마이그레이션 필요
+npm run runners:build
+npm run smoke:judge
+```
+
+### 커밋
+
+```
+브랜치     work-YYYYMMDD
+제목       한국어 명사구. feat: 같은 접두어를 쓰지 않는다
+본문       변경이 클 때만. 무엇을 왜 바꿨는지
+```
+
+`main`에 직접 커밋하지 않습니다. 푸시 후 PR로 머지합니다.
+
+---
+
+## 변경 이력
+
+버전은 의미 있는 기능 묶음이 끝날 때 올립니다. 날짜는 작업일입니다.
+
+### v0.1.0 (2026-09-16) 최초 구현
+
+동작하는 최소 저지입니다. 제출부터 판정까지 전 과정이 돌고, 4개 언어를 지원합니다.
+
+**채점**
+
+- PostgreSQL 기반 채점 큐 (`FOR UPDATE SKIP LOCKED` + `LISTEN/NOTIFY`). 메시지 큐 없음
+- 언어별 상주 러너 컨테이너 풀. 제출마다 컨테이너를 띄우지 않음
+- isolate 2.7 샌드박스. cgroup v2 위임을 컨테이너 진입점에서 직접 처리
+- 테스트케이스를 읽기 전용으로 붙이고 실행 직전 해당 케이스 하나만 복사
+- C17, C++20, Python 3.13, Java 21
+- 판정 8종: 정답, 오답, 시간 초과, 메모리 초과, 출력 초과, 런타임 에러, 컴파일 에러, 채점 오류
+- 죽은 워커 회수, 자동 재시도 3회, 재채점 API
+- 같은 `WORKER_ID` 중복 기동 차단
+- 박스 id를 워커 전역으로 배분해 샌드박스 uid 충돌 방지
+
+**도메인**
+
+- 컬렉션 통합. 교재, 문제집, 대회, 코딩 테스트를 정책 축 조합으로 표현
+- 개인별 타이머(코딩 테스트), 결과 숨김, 스코어보드 동결
+- 순위 규칙: 진도, ICPC, IOI
+- 이메일 로그인. 계정당 이메일 2개까지
+- 연구 목적 이용 동의 (선택, 기본 꺼짐)
+- 채점 환경과 테스트케이스 버전 기록
+
+**화면**
+
+- SvelteKit SPA. 라우트별 첫 로드 32~40 KB gzip
+- CodeMirror 6 에디터. 제출 영역이 그려질 때만 지연 로드
+- 채점 현황 폴링, 다크 모드
+
+**검증**
+
+- 자동 테스트 21건 (판정 규칙 11, 큐 동작 10)
+- `smoke:judge` 16건. 워커가 실제로 만드는 isolate 인자를 그대로 검증
+
+**알려진 한계**
+
+- 이메일 인증 없음. 가입 시 주소 소유를 확인하지 않음
+- 관리자 화면 없음. 문제 등록과 테스트케이스 업로드가 API 직접 호출
+- 문제 본문이 평문으로 렌더링됨. 마크다운, 수식, 도식 미지원
+- 부분점수와 스페셜 저지는 스키마만 있고 화면과 채점 경로가 없음
+- 학교 그룹, 커뮤니티, GitHub Actions CI 미구현

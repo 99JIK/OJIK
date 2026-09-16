@@ -1,0 +1,9 @@
+ARG BASE=ojik-runner-base:latest
+FROM ${BASE}
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends python3; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3 --version

@@ -1,0 +1,7 @@
+# 줄바꿈은 저장소에서 LF 로 통일한다. Windows, macOS, 리눅스를 오가므로
+# 체크아웃마다 전 파일이 수정된 것처럼 보이는 걸 막는다.
+* text=auto eol=lf
+
+# 셸 스크립트와 Dockerfile 은 컨테이너 안에서 실행되므로 반드시 LF 여야 한다
+*.sh text eol=lf
+Dockerfile* text eol=lf

@@ -1,0 +1,21 @@
+{
+    "name": "@ojik/worker",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch src/index.ts",
+        "start": "tsx src/index.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@ojik/core": "*",
+        "@ojik/db": "*",
+        "dockerode": "^4.0.4",
+        "zod": "^3.24.1"
+    },
+    "devDependencies": {
+        "@types/dockerode": "^3.3.34",
+        "@types/node": "^22.10.5"
+    }
+}
