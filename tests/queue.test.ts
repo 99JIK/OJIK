@@ -4,7 +4,6 @@ import { sql } from "drizzle-orm";
 import { loadEnv } from "@ojik/core/env";
 import { MAX_JUDGE_ATTEMPTS } from "@ojik/core";
 import {
-    createDb,
     claimNext,
     heartbeat,
     reclaimStale,
@@ -13,6 +12,7 @@ import {
     submissions,
     type DbHandle,
 } from "@ojik/db";
+import { openTestDb, ensureNoLiveWorker } from "./dbsetup";
 
 /**
  * 큐 동작 테스트. 실제 Postgres 가 필요하다.
@@ -25,30 +25,10 @@ import {
 
 loadEnv();
 
-const url = process.env.DATABASE_URL;
 let h: DbHandle;
 
-/**
- * 워커가 떠 있으면 테스트가 만든 큐 행을 가로채서 결과가 흔들린다.
- * 조용히 실패하면 원인을 찾는 데 오래 걸리므로 시작할 때 분명히 막는다.
- */
-async function ensureNoLiveWorker(h: DbHandle): Promise<void> {
-    const rows = await h.db.execute<{ id: string }>(sql`
-        SELECT id FROM judge_workers WHERE last_seen_at > now() - interval '60 seconds'
-    `);
-    const live = Array.from(rows as Iterable<{ id: string }>);
-    if (live.length > 0) {
-        throw new Error(
-            `워커가 돌고 있습니다 (${live.map((w) => w.id).join(", ")}).
-` +
-                `  테스트가 만든 제출을 워커가 가로채서 결과가 흔들립니다. 워커를 멈추고 다시 돌리세요.`,
-        );
-    }
-}
-
 before(async () => {
-    if (!url) throw new Error("DATABASE_URL 이 없습니다. npm run infra:up 후 다시 돌리세요.");
-    h = createDb(url, { max: 6 });
+    h = await openTestDb(6);
     await ensureNoLiveWorker(h);
     // 문제 1 과 사용자 2 가 있어야 한다. 없으면 시드가 안 돌아간 것
     const [p] = await h.db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM problems`);

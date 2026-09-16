@@ -1,3 +1,4 @@
+import { requireApi, requireWorker } from "./preflight";
 import { loadEnv } from "@ojik/core/env";
 import { LANGUAGES, VERDICT_LABEL, type Verdict } from "@ojik/core";
 import { FIXTURES } from "./lang-fixtures";
@@ -46,6 +47,9 @@ async function waitVerdict(id: number, timeoutMs: number): Promise<Verdict | nul
 }
 
 async function main() {
+    await requireApi();
+    await requireWorker();
+
     await call("/auth/login", { method: "POST", body: JSON.stringify({ email: EMAIL, password: PASSWORD }) });
 
     // A+B 형태의 문제를 고른다. 시드의 첫 문제가 그렇다

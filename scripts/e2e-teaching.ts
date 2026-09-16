@@ -1,3 +1,4 @@
+import { requireApi } from "./preflight";
 import { loadEnv } from "@ojik/core/env";
 import { sql } from "drizzle-orm";
 import { createDb } from "@ojik/db";
@@ -161,6 +162,8 @@ const PROBLEM = {
 };
 
 async function main() {
+    await requireApi();
+
     await cleanup();
 
     const admin = await login("admin@example.com", "admin1234");

@@ -10,7 +10,8 @@ import {
     CHECKER_TYPES,
     COLLECTION_PRESETS,
 } from "@ojik/core";
-import { createDb, type DbHandle } from "@ojik/db";
+import { type DbHandle } from "@ojik/db";
+import { openTestDb } from "./dbsetup";
 
 /**
  * core 의 상수와 DB 의 enum 이 같은지 본다.
@@ -25,12 +26,10 @@ import { createDb, type DbHandle } from "@ojik/db";
 
 loadEnv();
 
-const url = process.env.DATABASE_URL;
 let h: DbHandle;
 
-before(() => {
-    if (!url) throw new Error("DATABASE_URL 이 없습니다.");
-    h = createDb(url, { max: 2 });
+before(async () => {
+    h = await openTestDb(2);
 });
 
 after(async () => {

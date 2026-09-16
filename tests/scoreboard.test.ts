@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { sql } from "drizzle-orm";
 import { loadEnv } from "@ojik/core/env";
 import { DEFAULT_PENALTY_MINUTES, SCORINGS } from "@ojik/core";
-import { createDb, scoreboard, type DbHandle } from "@ojik/db";
+import { scoreboard, type DbHandle } from "@ojik/db";
+import { openTestDb, ensureNoLiveWorker } from "./dbsetup";
 
 /**
  * 순위표 질의. 실제 PostgreSQL 이 필요하다.
@@ -28,28 +29,8 @@ const START = new Date(Date.now() - 2 * 60 * 60 * 1000);
 START.setMilliseconds(0);
 START.setSeconds(0);
 
-/**
- * 워커가 떠 있으면 테스트가 만든 큐 행을 가로채서 결과가 흔들린다.
- * 조용히 실패하면 원인을 찾는 데 오래 걸리므로 시작할 때 분명히 막는다.
- */
-async function ensureNoLiveWorker(h: DbHandle): Promise<void> {
-    const rows = await h.db.execute<{ id: string }>(sql`
-        SELECT id FROM judge_workers WHERE last_seen_at > now() - interval '60 seconds'
-    `);
-    const live = Array.from(rows as Iterable<{ id: string }>);
-    if (live.length > 0) {
-        throw new Error(
-            `워커가 돌고 있습니다 (${live.map((w) => w.id).join(", ")}).
-` +
-                `  테스트가 만든 제출을 워커가 가로채서 결과가 흔들립니다. 워커를 멈추고 다시 돌리세요.`,
-        );
-    }
-}
-
 before(async () => {
-    const url = process.env.DATABASE_URL;
-    if (!url) throw new Error("DATABASE_URL 이 없습니다.");
-    h = createDb(url, { max: 4 });
+    h = await openTestDb(4);
     await ensureNoLiveWorker(h);
 
     const [p] = await h.db.execute<{ id: number }>(sql`SELECT min(id)::int AS id FROM problems`);

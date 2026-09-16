@@ -1,3 +1,4 @@
+import { requireApi, requireWorker } from "./preflight";
 import { loadEnv } from "@ojik/core/env";
 import { SOLUTION_LIMITS, dailyWriteLimit } from "@ojik/core";
 import { sql } from "drizzle-orm";
@@ -116,6 +117,9 @@ async function resetStudent(): Promise<void> {
 }
 
 async function main() {
+    await requireApi();
+    await requireWorker();
+
     await resetStudent();
 
     const admin = await login("admin@example.com", "admin1234");
