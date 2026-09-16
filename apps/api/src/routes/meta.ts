@@ -1,9 +1,12 @@
 import { Hono } from "hono";
-import { desc, sql } from "drizzle-orm";
-import { LANGUAGES, VERDICT_LABEL, STATUS_LABEL, CHECKER_LABEL, PROBLEM_LIMITS } from "@ojik/core";
-import { queueStats, judgeWorkers } from "@ojik/db";
+import { z } from "zod";
+import { HTTPException } from "hono/http-exception";
+import { v } from "../validate";
+import { desc, eq, sql } from "drizzle-orm";
+import { LANGUAGES, VERDICT_LABEL, STATUS_LABEL, CHECKER_LABEL, PROBLEM_LIMITS, ROLES } from "@ojik/core";
+import { queueStats, judgeWorkers, users } from "@ojik/db";
 import { db } from "../db";
-import type { AuthEnv } from "../auth";
+import { requireRole, type AuthEnv } from "../auth";
 
 export const metaRoutes = new Hono<AuthEnv>()
     /**
@@ -83,6 +86,61 @@ export const metaRoutes = new Hono<AuthEnv>()
             workers: alive.map((w) => ({ alive: true, capacity: w.capacity, busy: w.busy })),
         });
     })
+
+    /**
+     * 사용자 목록. 권한 관리 화면용이라 admin 만 본다.
+     * 이메일은 안 내려보낸다. 권한을 주고받는 데 필요 없고, 새어 나갈 이유도 없다.
+     */
+    .get("/admin/users", requireRole("admin"), async (c) => {
+        const q = c.req.query("q") ?? "";
+        const rows = await db
+            .select({
+                id: users.id,
+                handle: users.handle,
+                displayName: users.displayName,
+                role: users.role,
+                solvedCount: users.solvedCount,
+                submissionCount: users.submissionCount,
+                createdAt: users.createdAt,
+                lastLoginAt: users.lastLoginAt,
+            })
+            .from(users)
+            .where(q ? sql`lower(${users.handle}) LIKE lower(${"%" + q + "%"})` : undefined)
+            .orderBy(users.id)
+            .limit(200);
+        return c.json({ users: rows });
+    })
+
+    /**
+     * 권한 변경.
+     *
+     * 자기 자신을 내리는 건 막는다. 관리자가 실수로 자기 권한을 없애면 되돌릴 방법이
+     * scripts/set-role.ts 뿐이고, 그건 서버에 붙어야 한다.
+     */
+    .patch(
+        "/admin/users/:id{[0-9]+}/role",
+        requireRole("admin"),
+        v("json", z.object({ role: z.enum(ROLES) })),
+        async (c) => {
+            const id = Number(c.req.param("id"));
+            const me = c.get("user")!;
+            const { role } = c.req.valid("json");
+
+            if (id === me.id && role !== "admin") {
+                throw new HTTPException(409, {
+                    message: "자기 권한은 내릴 수 없습니다. 다른 관리자에게 부탁하세요.",
+                });
+            }
+
+            const [row] = await db
+                .update(users)
+                .set({ role })
+                .where(eq(users.id, id))
+                .returning({ id: users.id, handle: users.handle, role: users.role });
+            if (!row) throw new HTTPException(404, { message: "사용자를 찾을 수 없습니다" });
+            return c.json({ user: row });
+        },
+    )
 
     /** 랭킹. 맞힌 문제 수 기준 */
     .get("/ranking", async (c) => {

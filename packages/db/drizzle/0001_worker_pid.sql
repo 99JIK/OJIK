@@ -1,0 +1,1 @@
+ALTER TABLE "judge_workers" ADD COLUMN "pid" integer DEFAULT 0 NOT NULL;

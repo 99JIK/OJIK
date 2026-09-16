@@ -195,7 +195,18 @@ async function ensureNotDuplicate(): Promise<void> {
     if (!existing) return;
 
     const silentMs = Date.now() - existing.lastSeenAt.getTime();
-    if (silentMs >= JUDGE_LEASE_TIMEOUT_MS) return; // 죽은 워커의 흔적이다. 이어받는다
+    if (silentMs >= JUDGE_LEASE_TIMEOUT_MS) return; // 오래 조용하다. 죽은 흔적으로 본다
+
+    /**
+     * 같은 호스트라면 그 프로세스가 살아 있는지 직접 본다.
+     *
+     * 정상 종료는 자기 행을 지우지만 강제 종료는 남긴다. 그것 때문에 재시작이
+     * 2분간 막히면 배포와 디버깅이 괴로워진다. PID 로 확인하면 바로 이어받을 수 있다.
+     */
+    if (existing.hostname === os.hostname() && existing.pid > 0 && !isProcessAlive(existing.pid)) {
+        log.warn("죽은 워커 등록을 이어받습니다", { pid: existing.pid, silentMs });
+        return;
+    }
 
     throw new Error(
         `WORKER_ID '${config.WORKER_ID}' 로 도는 워커가 이미 있습니다 ` +
@@ -212,6 +223,7 @@ async function register(): Promise<void> {
         .values({
             id: config.WORKER_ID,
             hostname: os.hostname(),
+            pid: process.pid,
             version: process.env.npm_package_version ?? "dev",
             capacity: config.WORKER_CAPACITY,
             busy: 0,
@@ -220,6 +232,7 @@ async function register(): Promise<void> {
             target: judgeWorkers.id,
             set: {
                 hostname: os.hostname(),
+                pid: process.pid,
                 capacity: config.WORKER_CAPACITY,
                 busy: 0,
                 startedAt: new Date(),
@@ -263,6 +276,17 @@ async function shutdown(code: number): Promise<void> {
     await handle.close().catch(() => {});
     log.info("stopped");
     process.exit(code);
+}
+
+/** 시그널 0 은 프로세스를 안 건드리고 존재만 본다 */
+function isProcessAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (e) {
+        // EPERM 이면 내 권한 밖의 프로세스다. 살아 있다는 뜻이므로 죽었다고 보면 안 된다
+        return (e as NodeJS.ErrnoException).code === "EPERM";
+    }
 }
 
 function sleep(ms: number): Promise<void> {
