@@ -206,6 +206,36 @@ async function main() {
         ok("아카이브로 못 옮긴다 (403)", move.status === 403, `${move.status}`);
     }
 
+    console.log("\n== 강의에 담기 ==");
+    {
+        // 강사가 만든 문제를 자기 강의 항목으로 넣는다. 화면이 하는 일과 같은 순서다
+        const put = await req(teacher, `/collections/${collectionId}/items`, {
+            method: "PUT",
+            body: JSON.stringify({ items: [{ kind: "problem", problemId, points: 100 }] }),
+        });
+        ok("강의 항목에 담는다 (200)", put.status === 200, `${put.status} ${put.body.error ?? ""}`);
+
+        const detail = await req<{ items: Array<{ problemId: number | null }> }>(
+            teacher,
+            `/collections/e2e-course-${STAMP}`,
+        );
+        ok(
+            "강의 상세에 문제가 보인다",
+            (detail.body.items ?? []).some((i) => i.problemId === problemId),
+        );
+
+        // 수강생은 강의에 속해야 강의 전용 문제를 본다
+        const before = await req(student, `/problems/${problemId}`);
+        ok("명단에 없으면 문제를 못 본다 (404)", before.status === 404, `${before.status}`);
+
+        await req(teacher, `/collections/${collectionId}/members`, {
+            method: "PUT",
+            body: JSON.stringify({ handles: [student.handle], role: "member" }),
+        });
+        const after = await req(student, `/problems/${problemId}`);
+        ok("수강생이 되면 문제를 본다 (200)", after.status === 200, `${after.status}`);
+    }
+
     console.log("\n== 남의 강의 ==");
     {
         const r = await req(other, `/collections/${collectionId}`, {
@@ -234,7 +264,12 @@ async function main() {
             `/collections/${collectionId}/members`,
             {
                 method: "PUT",
-                body: JSON.stringify({ handles: [student.handle, "없는핸들"], role: "member" }),
+                body: JSON.stringify({
+                    handles: [student.handle, "없는핸들"],
+                    role: "member",
+                    // 위에서 이미 넣었으므로 갈아끼운다. 안 그러면 added 가 0 이다
+                    replace: true,
+                }),
             },
         );
         ok("명단을 넣는다 (200)", put.status === 200, `${put.status}`);

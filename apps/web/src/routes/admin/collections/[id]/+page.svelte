@@ -43,6 +43,8 @@
 
     let problems = $state<ProblemSummary[]>([]);
     let pickerQuery = $state("");
+    /** 이 강의 전용 문제의 id. 목록에서 구분 표시에 쓴다 */
+    let ownProblemIds = $state<Set<number>>(new Set());
     let error = $state<string | null>(null);
     let notice = $state<string | null>(null);
     let busy = $state(false);
@@ -89,12 +91,28 @@
         })();
     });
 
+    /**
+     * 고를 수 있는 문제.
+     *
+     * 공개 아카이브만 뒤지면 이 강의 전용으로 만든 문제가 안 나온다. 그게 과제라서
+     * 제일 먼저 담고 싶은 것이다. 강의 문제를 위에 두고 아카이브를 아래에 붙인다.
+     */
     $effect(() => {
         const q = pickerQuery;
+        const cid = id;
         void (async () => {
             try {
-                const r = await get<{ problems: ProblemSummary[] }>("/problems", { q, limit: 20 });
-                problems = r.problems;
+                const [own, archive] = await Promise.all([
+                    get<{ problems: ProblemSummary[] }>("/problems", { collectionId: cid, limit: 50 }).catch(
+                        () => ({ problems: [] }),
+                    ),
+                    get<{ problems: ProblemSummary[] }>("/problems", { q, limit: 20 }),
+                ]);
+                const mine = q
+                    ? own.problems.filter((p) => p.title.toLowerCase().includes(q.toLowerCase()))
+                    : own.problems;
+                ownProblemIds = new Set(mine.map((p) => p.id));
+                problems = [...mine, ...archive.problems];
             } catch {
                 // 목록을 못 받아도 편집은 계속된다
             }
@@ -313,7 +331,15 @@
     </section>
 
     <section class="mt-8 border-t border-zinc-200 pt-6 dark:border-zinc-800">
-        <h3 class="mb-2 font-medium">문제 추가</h3>
+        <div class="mb-2 flex items-baseline justify-between gap-3">
+            <h3 class="font-medium">문제 추가</h3>
+            <a
+                href="/admin/problems/new?collectionId={id}"
+                class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+            >
+                이 강의에 새 문제 만들기
+            </a>
+        </div>
         <input
             bind:value={pickerQuery}
             placeholder="제목 검색"
@@ -323,7 +349,14 @@
             {#each problems as p (p.id)}
                 <li class="flex items-center gap-3 px-3 py-2 text-sm">
                     <span class="w-10 text-zinc-400">{p.id}</span>
-                    <span class="flex-1">{p.title}</span>
+                    <span class="flex-1">
+                        {p.title}
+                        {#if ownProblemIds.has(p.id)}
+                            <span class="ml-1 rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                이 강의
+                            </span>
+                        {/if}
+                    </span>
                     <button
                         onclick={() => addProblem(p)}
                         class="text-xs text-blue-600 hover:underline dark:text-blue-400"

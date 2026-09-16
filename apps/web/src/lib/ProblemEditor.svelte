@@ -2,6 +2,8 @@
     import { goto } from "$app/navigation";
     import { get, post, patch, put } from "$lib/api";
     import { CHECKER_LABEL, CHECKER_TYPES, PROBLEM_LIMITS, type CheckerType } from "@ojik/core";
+    import { page } from "$app/state";
+    import { session } from "$lib/session.svelte";
 
     /**
      * 문제 등록과 수정을 한 화면으로 쓴다.
@@ -28,6 +30,15 @@
     let stopOnFirstFail = $state(true);
     let isPublic = $state(false);
 
+    /**
+     * 소속 강의. null 이면 공개 아카이브 문제다.
+     *
+     * 강사는 공개 아카이브에 못 내므로 반드시 하나를 골라야 한다. 출제자는 둘 다 된다.
+     * 만든 뒤에 소속을 바꾸는 건 출제자 이상만이라, 강사에게는 읽기 전용으로 보여 준다.
+     */
+    let ownerCollectionId = $state<number | null>(null);
+    let myCollections = $state<Array<{ id: number; title: string }>>([]);
+
     let testcases = $state<Testcase[]>([]);
     /** 서버에 저장된 테스트케이스 수. 편집을 시작했는지 판단에 쓴다 */
     let savedCount = $state(0);
@@ -44,6 +55,32 @@
      */
     // svelte-ignore state_referenced_locally
     let loaded = $state(problemId === null);
+
+    /**
+     * 소속으로 고를 수 있는 강의.
+     *
+     * 강사는 공개 아카이브에 못 내므로, 새 문제면 첫 강의를 기본값으로 채워 둔다.
+     * 비워 두면 저장을 눌렀을 때 403 을 보게 되는데, 고를 수 있는 값이 화면에 있는데도
+     * 서버가 막는 건 나쁜 안내다.
+     */
+    $effect(() => {
+        void (async () => {
+            const r = await get<{ collections: Array<{ id: number; title: string }> }>(
+                "/collections",
+                { mine: true },
+            ).catch(() => ({ collections: [] }));
+            myCollections = r.collections;
+
+            const fromQuery = Number(page.url.searchParams.get("collectionId")) || null;
+            if (problemId === null && ownerCollectionId === null) {
+                if (fromQuery && r.collections.some((c) => c.id === fromQuery)) {
+                    ownerCollectionId = fromQuery;
+                } else if (!session.isStaff) {
+                    ownerCollectionId = r.collections[0]?.id ?? null;
+                }
+            }
+        })();
+    });
 
     $effect(() => {
         const id = problemId;
@@ -66,6 +103,7 @@
                 floatEpsilon = (p.floatEpsilon as number) ?? 1e-6;
                 stopOnFirstFail = (p.stopOnFirstFail as boolean) ?? true;
                 isPublic = (p.isPublic as boolean) ?? false;
+                ownerCollectionId = (p.ownerCollectionId as number | null) ?? null;
                 savedCount = r.testcaseCount;
             } catch (e) {
                 error = e instanceof Error ? e.message : String(e);
@@ -121,6 +159,7 @@
             floatEpsilon,
             stopOnFirstFail,
             isPublic,
+            ownerCollectionId,
         };
     }
 
@@ -286,6 +325,40 @@
                     자원 절약을 위한 것입니다. 부분점수를 주려면 꺼야 점수가 제대로 나옵니다.
                 </span>
             </span>
+        </label>
+
+        <label class="block text-sm">
+            <span class="mb-1 block">소속</span>
+            {#if problemId !== null && !session.isStaff}
+                <p class="rounded-md bg-zinc-100 px-3 py-2 text-sm dark:bg-zinc-900">
+                    {myCollections.find((c) => c.id === ownerCollectionId)?.title ?? "공개 아카이브"}
+                    <span class="block text-xs text-zinc-400">소속은 출제자만 바꿀 수 있습니다.</span>
+                </p>
+            {:else}
+                <select
+                    bind:value={ownerCollectionId}
+                    class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                    {#if session.isStaff}
+                        <option value={null}>공개 아카이브</option>
+                    {/if}
+                    {#each myCollections as c (c.id)}
+                        <option value={c.id}>{c.title}</option>
+                    {/each}
+                </select>
+                <span class="mt-1 block text-xs text-zinc-400">
+                    {#if session.isStaff}
+                        공개 아카이브로 두면 문제 목록에 오릅니다. 강의를 고르면 그 강의 안에서만 보입니다.
+                    {:else}
+                        강의를 고르면 그 강의 안에서만 보입니다. 공개 아카이브에는 출제자만 낼 수 있습니다.
+                    {/if}
+                </span>
+                {#if !session.isStaff && myCollections.length === 0}
+                    <span class="mt-1 block text-xs text-red-600 dark:text-red-400">
+                        운영하는 강의가 없습니다. 강의를 먼저 만드세요.
+                    </span>
+                {/if}
+            {/if}
         </label>
 
         <label class="flex items-start gap-2 text-sm">
