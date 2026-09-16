@@ -97,6 +97,30 @@ async function setRole(handle: string, role: string): Promise<void> {
     }
 }
 
+/**
+ * 다른 사람이 이 문제를 맞힌 기록을 만든다.
+ *
+ * 채점을 거치지 않고 행을 직접 넣는다. 강의 전용 문제에는 테스트케이스가 없어서 실제로
+ * 풀게 할 수가 없고, 여기서 보려는 건 채점이 아니라 진도가 남의 기록을 세지 않는지다.
+ *
+ * 이게 없으면 그 문제를 푼 사람이 아무도 없어서, 진도가 본인 것만 세든 전부를 세든
+ * 똑같이 0 이 나온다. 구분을 못 하는 검사는 통과해도 아무것도 안 알려 준다.
+ */
+async function fakeAccepted(handle: string, problemId: number): Promise<void> {
+    const url = process.env.DATABASE_URL;
+    if (!url) throw new Error("DATABASE_URL 이 없습니다.");
+    const h = createDb(url, { max: 1 });
+    try {
+        await h.db.execute(sql`
+            INSERT INTO submissions (problem_id, user_id, language, source_code, source_bytes, status, verdict)
+            SELECT ${problemId}, u.id, 'python3', 'x', 1, 'done', 'accepted'
+            FROM users u WHERE lower(u.handle) = ${handle.toLowerCase()}
+        `);
+    } finally {
+        await h.close();
+    }
+}
+
 /** 지난 실행이 남긴 확인용 계정과 그 강의를 지운다 */
 async function cleanup(): Promise<void> {
     const url = process.env.DATABASE_URL;
@@ -268,6 +292,16 @@ async function main() {
 
         const list = await req(other, `/problems?collectionId=${collectionId}`);
         ok("남의 강의 문제 목록을 못 본다 (403)", list.status === 403, `${list.status}`);
+
+        // 목록의 개수도 값으로 본다. 상태 코드만 보면 0 이 나와도 통과한다
+        const mineList = await req<{ collections: Array<{ id: number; problemCount: number; memberCount: number }> }>(
+            teacher,
+            "/collections?mine=true",
+        );
+        const row = (mineList.body.collections ?? []).find((c) => c.id === collectionId);
+        ok("내 목록에 뜬다", !!row);
+        ok("목록의 문제 수가 맞다", row?.problemCount === 1, `${row?.problemCount}`);
+        ok("목록의 인원이 맞다", row?.memberCount === 1, `${row?.memberCount}`);
     }
 
     console.log("\n== 그림 올리기 ==");
@@ -312,6 +346,10 @@ async function main() {
         }
     }
 
+    // 진도 검사가 구분을 하려면 남이 푼 기록이 먼저 있어야 한다.
+    // 아무도 안 푼 상태면 본인 것만 세든 전부를 세든 똑같이 0 이다
+    await fakeAccepted(other.handle, problemId);
+
     console.log("\n== 수강생 관리 ==");
     {
         const put = await req<{ added: number; missing: string[] }>(
@@ -331,15 +369,37 @@ async function main() {
         ok("등록된 사람은 1명", put.body.added === 1, `${put.body.added}`);
         ok("없는 핸들을 돌려준다", (put.body.missing ?? []).includes("없는핸들"));
 
-        const get = await req<{ members: Array<{ handle: string; role: string }>; problemCount: number }>(
-            teacher,
-            `/collections/${collectionId}/members`,
-        );
+        const get = await req<{
+            members: Array<{ handle: string; role: string; userId: number; solvedHere: number }>;
+            problemCount: number;
+        }>(teacher, `/collections/${collectionId}/members`);
         ok("명단을 본다 (200)", get.status === 200, `${get.status}`);
         ok(
             "넣은 사람이 보인다",
             (get.body.members ?? []).some((m) => m.handle === student.handle),
         );
+
+        /*
+         * 진도가 본인 것만 세는지.
+         *
+         * 값이 아니라 상태 코드만 보다가 한 번 놓쳤다. 상관 서브쿼리에서 바깥 컬럼을
+         * drizzle 보간으로 쓰면 "user_id" 만 나가는데, 서브쿼리의 submissions 에도 같은
+         * 이름이 있어서 조건이 늘 참이 됐다. 모든 사람의 정답 수를 세고 있었다.
+         *
+         * 이 강의 문제는 방금 만든 것이라 아무도 안 풀었다. 그러니 0 이어야 한다.
+         */
+        const mine = (get.body.members ?? []).find((m) => m.handle === student.handle);
+        ok("진도가 본인 것만 센다", mine?.solvedHere === 0, `${mine?.solvedHere}`);
+        ok("문제 수가 맞다", get.body.problemCount === 1, `${get.body.problemCount}`);
+
+        // 본인이 풀면 오른다
+        await fakeAccepted(student.handle, problemId);
+        const after = await req<{ members: Array<{ handle: string; solvedHere: number }> }>(
+            teacher,
+            `/collections/${collectionId}/members`,
+        );
+        const mine2 = (after.body.members ?? []).find((m) => m.handle === student.handle);
+        ok("본인이 풀면 진도가 오른다", mine2?.solvedHere === 1, `${mine2?.solvedHere}`);
 
         const byStudent = await req(student, `/collections/${collectionId}/members`);
         ok("수강생은 명단을 못 본다 (403)", byStudent.status === 403, `${byStudent.status}`);

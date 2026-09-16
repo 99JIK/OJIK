@@ -23,6 +23,33 @@ export const PRESET_LABEL: Record<CollectionPreset, string> = {
     exam: "코딩 테스트",
 };
 
+/**
+ * 만들 때 고르는 화면에 붙일 한 줄 설명.
+ *
+ * 넷의 차이는 축 값 조합인데, 축 이름(timing, reveal, joinPolicy)을 그대로 보여 주면
+ * 처음 쓰는 사람은 뭘 고를지 모른다. 무엇에 쓰는 물건인지로 적는다.
+ */
+export const PRESET_DESCRIPTION: Record<CollectionPreset, string> = {
+    course: "설명과 문제를 섞어 순서대로 읽습니다. 수업 자료와 연습 문제에 씁니다.",
+    problemset: "문제만 모읍니다. 누가 어디까지 풀었는지 진도로 봅니다.",
+    contest: "정해진 시각에 다 같이 시작합니다. 순위표가 붙고 끝나기 전에는 얼립니다.",
+    exam: "각자 시작을 누른 시점부터 시간이 흐릅니다. 결과는 끝난 뒤에 공개합니다.",
+};
+
+/**
+ * 제목에서 주소를 만든다.
+ *
+ * 영문과 숫자만 남긴다. 한글 제목이면 남는 게 없는데, 그때는 부르는 쪽이 대체값을 준다.
+ * 한글을 로마자로 바꾸는 건 규칙이 지저분하고 결과도 예쁘지 않아서 안 한다.
+ */
+export function slugify(title: string): string {
+    return title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 48);
+}
+
 /** 축 1: 시간 창 */
 export const TIMINGS = ["none", "fixed", "per_user"] as const;
 export type Timing = (typeof TIMINGS)[number];

@@ -306,13 +306,19 @@
                     </button>
                 </div>
             {:else}
-                <p class="rounded-md border border-dashed border-zinc-300 py-8 text-center text-sm text-zinc-400 dark:border-zinc-700">
-                    항목이 없습니다
-                </p>
+                <div class="rounded-md border border-dashed border-zinc-300 px-6 py-8 text-center dark:border-zinc-700">
+                    <p class="text-sm text-zinc-500">아직 비어 있습니다.</p>
+                    <p class="mt-1 text-xs leading-relaxed text-zinc-400">
+                        아래 <strong>문제 추가</strong>에서 문제를 담고, 설명이 필요하면
+                        <strong>설명 추가</strong>로 글을 끼웁니다. 순서가 곧 학생이 보는 순서입니다.
+                        <br />
+                        다 넣은 뒤 <strong>항목 저장</strong>을 눌러야 반영됩니다.
+                    </p>
+                </div>
             {/each}
         </div>
 
-        <div class="mt-3 flex gap-2">
+        <div class="mt-3 flex flex-wrap items-center gap-2">
             <button onclick={addText} class="rounded-md border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700">
                 설명 추가
             </button>
@@ -323,6 +329,11 @@
             >
                 {busy ? "..." : "항목 저장"}
             </button>
+            <!--
+                항목은 전체 교체라 누르기 전까지 서버에 아무것도 안 간다.
+                문제를 담고 저장을 안 누른 채 나가는 일이 생기기 쉬워서 적어 둔다.
+            -->
+            <span class="text-xs text-zinc-400">저장을 눌러야 반영됩니다.</span>
         </div>
     </section>
 

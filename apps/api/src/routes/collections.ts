@@ -140,9 +140,9 @@ export const collectionRoutes = new Hono<AuthEnv>()
                  * 관리자가 전체를 봐야 하면 mine 없이 부르면 된다
                  */
                 if (!user) throw new HTTPException(401, { message: "로그인이 필요합니다" });
-                conds.push(sql`(${collections.ownerId} = ${user.id} OR EXISTS (
+                conds.push(sql`(collections.owner_id = ${user.id} OR EXISTS (
                     SELECT 1 FROM collection_members m
-                    WHERE m.collection_id = ${collections.id}
+                    WHERE m.collection_id = collections.id
                       AND m.user_id = ${user.id} AND m.role = 'manager'))`);
             } else if (!isStaff) {
                 /*
@@ -153,17 +153,55 @@ export const collectionRoutes = new Hono<AuthEnv>()
                  */
                 conds.push(
                     user
-                        ? sql`(${collections.visibility} = 'public'
-                               OR ${collections.ownerId} = ${user.id}
+                        ? sql`(collections.visibility = 'public'
+                               OR collections.owner_id = ${user.id}
                                OR EXISTS (
                                SELECT 1 FROM collection_members m
-                               WHERE m.collection_id = ${collections.id} AND m.user_id = ${user.id}))`
+                               WHERE m.collection_id = collections.id AND m.user_id = ${user.id}))`
                         : eq(collections.visibility, "public"),
                 );
             }
 
+            /*
+             * 문제 수와 인원을 같이 센다.
+             *
+             * 관리 화면이 목록에서 "비어 있는 컬렉션"을 구분해야 하는데, 행마다 따로 물으면
+             * 컬렉션 수만큼 질의가 는다. 상관 서브쿼리 두 개면 한 번에 끝난다.
+             */
             const rows = await db
-                .select()
+                .select({
+                    id: collections.id,
+                    slug: collections.slug,
+                    title: collections.title,
+                    preset: collections.preset,
+                    timing: collections.timing,
+                    reveal: collections.reveal,
+                    scoring: collections.scoring,
+                    joinPolicy: collections.joinPolicy,
+                    visibility: collections.visibility,
+                    startsAt: collections.startsAt,
+                    endsAt: collections.endsAt,
+                    durationMinutes: collections.durationMinutes,
+                    ownerId: collections.ownerId,
+                    /*
+                     * 상관 서브쿼리 안에서는 바깥 테이블 이름을 직접 적는다.
+                     *
+                     * 이 쿼리는 조인이 없어서 ${collections.id} 가 "id" 하나로만 나간다. 서브쿼리 안에
+                     * id 컬럼을 가진 테이블이 있으면 그쪽에 붙어, 조건이 ci.collection_id = ci.id 가
+                     * 되고 결과가 조용히 0 이 된다. 실제로 그렇게 나갔다.
+                     *
+                     * memberCount 는 collection_members 에 id 컬럼이 없어서 우연히 맞았다.
+                     * 우연에 기대지 않으려고 둘 다 적는다.
+                     */
+                    problemCount: sql<number>`(
+                        SELECT count(*)::int FROM collection_items ci
+                        WHERE ci.collection_id = collections.id AND ci.kind = 'problem'
+                    )`,
+                    memberCount: sql<number>`(
+                        SELECT count(*)::int FROM collection_members m
+                        WHERE m.collection_id = collections.id
+                    )`,
+                })
                 .from(collections)
                 .where(conds.length ? and(...conds) : undefined)
                 .orderBy(desc(collections.id));
@@ -374,12 +412,21 @@ export const collectionRoutes = new Hono<AuthEnv>()
                 joinedAt: collectionMembers.joinedAt,
                 startedAt: collectionMembers.startedAt,
                 endsAt: collectionMembers.endsAt,
+                /*
+                 * 바깥 컬럼은 테이블 이름까지 직접 적는다.
+                 *
+                 * drizzle 이 컬럼을 어떻게 내보낼지는 바깥 쿼리 모양에 달려 있다. 조인이 있으면
+                 * "collection_members"."user_id" 로 정규화하지만 없으면 "user_id" 만 내보낸다.
+                 * 후자면 서브쿼리 안의 같은 이름에 붙어 조건이 엉뚱해진다. 아래 목록 쿼리에서
+                 * 실제로 그렇게 나갔다. 여기는 지금 조인이 있어서 괜찮지만, 나중에 조인을 빼면
+                 * 조용히 깨지는 자리라 모양에 기대지 않는다.
+                 */
                 solvedHere: sql<number>`(
                     SELECT count(DISTINCT s.problem_id)::int
                     FROM submissions s
                     JOIN collection_items ci
                       ON ci.problem_id = s.problem_id AND ci.collection_id = ${id}
-                    WHERE s.user_id = ${collectionMembers.userId} AND s.verdict = 'accepted'
+                    WHERE s.user_id = collection_members.user_id AND s.verdict = 'accepted'
                 )`,
             })
             .from(collectionMembers)
