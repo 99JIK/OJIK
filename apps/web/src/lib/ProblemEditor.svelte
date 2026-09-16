@@ -1,7 +1,17 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
     import { get, post, patch, put } from "$lib/api";
-    import { CHECKER_LABEL, CHECKER_TYPES, PROBLEM_LIMITS, type CheckerType } from "@ojik/core";
+    import {
+        CHECKER_LABEL,
+        CHECKER_TYPES,
+        PROBLEM_LIMITS,
+        PROBLEM_KINDS,
+        PROBLEM_KIND_LABEL,
+        PROBLEM_KIND_DESCRIPTION,
+        LANGUAGES,
+        type CheckerType,
+        type ProblemKind,
+    } from "@ojik/core";
     import { page } from "$app/state";
     import MarkdownInput from "$lib/MarkdownInput.svelte";
     import { session } from "$lib/session.svelte";
@@ -39,6 +49,17 @@
      */
     let ownerCollectionId = $state<number | null>(null);
     let myCollections = $state<Array<{ id: number; title: string }>>([]);
+
+    /**
+     * 문제 유형.
+     *
+     * 유형에 따라 테스트케이스의 뜻이 달라진다. 코드와 빈칸은 input 이 프로그램 입력이고,
+     * 단답형은 input 이 문항 지문이다. 아래 편집 칸의 이름도 같이 바뀐다.
+     */
+    let kind = $state<ProblemKind>("code");
+    let blankTemplate = $state("");
+    let blankLinesText = $state("");
+    let blankLanguage = $state<string>("c");
 
     let testcases = $state<Testcase[]>([]);
     /** 서버에 저장된 테스트케이스 수. 편집을 시작했는지 판단에 쓴다 */
@@ -105,6 +126,22 @@
                 stopOnFirstFail = (p.stopOnFirstFail as boolean) ?? true;
                 isPublic = (p.isPublic as boolean) ?? false;
                 ownerCollectionId = (p.ownerCollectionId as number | null) ?? null;
+                kind = (p.kind as ProblemKind) ?? "code";
+
+                /*
+                 * 골격 원본은 상세에 안 실린다. 정답이 그대로 들어 있어서 뺐다.
+                 * 고치려면 있어야 하므로 편집용 라우트에서 따로 받는다.
+                 */
+                if (kind === "blank") {
+                    const src = await get<{
+                        blankTemplate: string | null;
+                        blankLines: number[] | null;
+                        blankLanguage: string | null;
+                    }>(`/problems/${id}/source`).catch(() => null);
+                    blankTemplate = src?.blankTemplate ?? "";
+                    blankLinesText = (src?.blankLines ?? []).join(", ");
+                    blankLanguage = src?.blankLanguage ?? "c";
+                }
                 savedCount = r.testcaseCount;
             } catch (e) {
                 error = e instanceof Error ? e.message : String(e);
@@ -161,6 +198,18 @@
             stopOnFirstFail,
             isPublic,
             ownerCollectionId,
+            kind,
+            ...(kind === "blank"
+                ? {
+                      blankTemplate,
+                      // "3, 5, 7" 처럼 적는다. 숫자가 아닌 것은 버린다
+                      blankLines: blankLinesText
+                          .split(/[^0-9]+/)
+                          .map(Number)
+                          .filter((n) => Number.isInteger(n) && n > 0),
+                      blankLanguage,
+                  }
+                : {}),
         };
     }
 
@@ -330,6 +379,99 @@
             </span>
         </label>
 
+        <div class="text-sm">
+            <span class="mb-2 block font-medium">유형</span>
+            <div class="grid gap-2 sm:grid-cols-3">
+                {#each PROBLEM_KINDS as k (k)}
+                    <button
+                        type="button"
+                        onclick={() => (kind = k)}
+                        class="rounded-md border px-3 py-2 text-left transition {kind === k
+                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40'
+                            : 'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900'}"
+                    >
+                        <span class="block font-medium">{PROBLEM_KIND_LABEL[k]}</span>
+                        <span class="mt-0.5 block text-xs leading-relaxed text-zinc-500">
+                            {PROBLEM_KIND_DESCRIPTION[k]}
+                        </span>
+                    </button>
+                {/each}
+            </div>
+        </div>
+
+        {#if kind === "blank"}
+            <div class="space-y-3 rounded-md border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/20">
+                <label class="block text-sm">
+                    <span class="mb-1 block font-medium">골격 코드</span>
+                    <textarea
+                        bind:value={blankTemplate}
+                        rows="12"
+                        spellcheck="false"
+                        placeholder="정답까지 다 쓴 코드를 넣으세요. 아래에서 고른 줄만 학생에게 비어 보입니다."
+                        class="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                    ></textarea>
+                    <span class="mt-1 block text-xs text-zinc-500">
+                        원본은 학생에게 안 내려갑니다. 비운 줄을 지운 골격만 갑니다.
+                    </span>
+                </label>
+
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <label class="block text-sm">
+                        <span class="mb-1 block font-medium">비울 줄</span>
+                        <input
+                            bind:value={blankLinesText}
+                            placeholder="3, 5, 7"
+                            class="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                        />
+                        <span class="mt-1 block text-xs text-zinc-500">1부터 센 줄 번호입니다.</span>
+                    </label>
+                    <label class="block text-sm">
+                        <span class="mb-1 block font-medium">채점 언어</span>
+                        <select
+                            bind:value={blankLanguage}
+                            class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                        >
+                            {#each LANGUAGES as l (l.id)}
+                                <option value={l.id}>{l.label}</option>
+                            {/each}
+                        </select>
+                        <span class="mt-1 block text-xs text-zinc-500">학생은 언어를 못 고릅니다.</span>
+                    </label>
+                </div>
+
+                {#if blankTemplate}
+                    {@const picked = blankLinesText
+                        .split(/[^0-9]+/)
+                        .map(Number)
+                        .filter((n) => Number.isInteger(n) && n > 0)}
+                    <div>
+                        <span class="mb-1 block text-sm font-medium">학생이 보는 모습</span>
+                        <div class="max-h-64 overflow-auto rounded-md border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950">
+                            <table class="w-full border-collapse font-mono text-xs">
+                                <tbody>
+                                    {#each blankTemplate.split("\n") as line, i (i)}
+                                        {@const n = i + 1}
+                                        <tr class={picked.includes(n) ? "bg-blue-100 dark:bg-blue-950/50" : ""}>
+                                            <td class="w-10 border-r border-zinc-200 px-2 text-right text-zinc-400 dark:border-zinc-800">
+                                                {n}
+                                            </td>
+                                            <td class="px-2">
+                                                {#if picked.includes(n)}
+                                                    <span class="text-blue-600 dark:text-blue-400">(빈칸)</span>
+                                                {:else}
+                                                    <pre class="whitespace-pre">{line || " "}</pre>
+                                                {/if}
+                                            </td>
+                                        </tr>
+                                    {/each}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                {/if}
+            </div>
+        {/if}
+
         <label class="block text-sm">
             <span class="mb-1 block">소속</span>
             {#if problemId !== null && !session.isStaff}
@@ -417,12 +559,19 @@
                 <div class="mt-4 space-y-4">
                     {#each testcases as tc, i (i)}
                         <div class="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
-                            <div class="mb-2 flex items-center gap-4 text-sm">
+                            <div class="mb-2 flex flex-wrap items-center gap-4 text-sm">
                                 <span class="font-medium">{i + 1}번</span>
-                                <label class="flex items-center gap-1.5">
-                                    <input type="checkbox" bind:checked={tc.isSample} />
-                                    예제로 공개
-                                </label>
+                                <!--
+                                    단답형은 예제 개념이 없다. 문항을 예제로 공개하면 기대 답이
+                                    같이 나가는데, 그건 답을 보여 주는 것이다. API 도 단답형
+                                    문제에서는 예제 목록을 아예 안 내보낸다
+                                -->
+                                {#if kind !== "answer"}
+                                    <label class="flex items-center gap-1.5">
+                                        <input type="checkbox" bind:checked={tc.isSample} />
+                                        예제로 공개
+                                    </label>
+                                {/if}
                                 <label class="flex items-center gap-1.5">
                                     배점
                                     <input
@@ -439,19 +588,35 @@
                                     삭제
                                 </button>
                             </div>
+                            <!--
+                                유형에 따라 두 칸의 뜻이 다르다.
+                                코드와 빈칸은 프로그램 입력과 기대 출력이고,
+                                단답형은 문항 지문과 기대 답이다. 표를 따로 두지 않는 대신
+                                이름을 바꿔 준다
+                            -->
                             <div class="grid gap-3 sm:grid-cols-2">
-                                <textarea
-                                    bind:value={tc.input}
-                                    rows="4"
-                                    placeholder="입력"
-                                    class="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
-                                ></textarea>
-                                <textarea
-                                    bind:value={tc.output}
-                                    rows="4"
-                                    placeholder="출력"
-                                    class="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
-                                ></textarea>
+                                <label class="block">
+                                    <span class="mb-1 block text-xs text-zinc-500">
+                                        {kind === "answer" ? "문항 지문 (마크다운)" : "입력"}
+                                    </span>
+                                    <textarea
+                                        bind:value={tc.input}
+                                        rows="4"
+                                        class="w-full rounded-md border border-zinc-300 px-3 py-2 {kind === 'answer'
+                                            ? 'text-sm'
+                                            : 'font-mono text-xs'} dark:border-zinc-700 dark:bg-zinc-900"
+                                    ></textarea>
+                                </label>
+                                <label class="block">
+                                    <span class="mb-1 block text-xs text-zinc-500">
+                                        {kind === "answer" ? "기대 답" : "출력"}
+                                    </span>
+                                    <textarea
+                                        bind:value={tc.output}
+                                        rows="4"
+                                        class="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                                    ></textarea>
+                                </label>
                             </div>
                         </div>
                     {/each}

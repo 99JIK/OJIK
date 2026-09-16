@@ -410,6 +410,23 @@ export const problemRoutes = new Hono<AuthEnv>()
         return c.json({ ok: true });
     })
 
+    /**
+     * 편집용 원본.
+     *
+     * 문제 상세는 빈칸의 원본 코드를 안 내보낸다. 정답이 그대로 들어 있어서다.
+     * 고칠 사람은 여기서 받아 간다. loadEditable 이 권한을 본다.
+     */
+    .get("/:id{[0-9]+}/source", requireAuth, async (c) => {
+        const id = Number(c.req.param("id"));
+        const p = await loadEditable(c.get("user")!, id);
+        return c.json({
+            kind: p.kind,
+            blankTemplate: p.blankTemplate,
+            blankLines: p.blankLines,
+            blankLanguage: p.blankLanguage,
+        });
+    })
+
     .get("/:id{[0-9]+}/testcases", requireAuth, async (c) => {
         const id = Number(c.req.param("id"));
         await loadEditable(c.get("user")!, id);

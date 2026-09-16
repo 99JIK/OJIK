@@ -5,6 +5,8 @@
     import { session } from "$lib/session.svelte";
     import { meta } from "$lib/meta.svelte";
     import Markdown from "$lib/Markdown.svelte";
+    import AnswerSubmit from "$lib/AnswerSubmit.svelte";
+    import BlankSubmit from "$lib/BlankSubmit.svelte";
 
     /**
      * 에디터는 제출 영역이 실제로 그려질 때만 받아 온다.
@@ -28,6 +30,10 @@
         /** 출제자. 계정이 지워졌으면 null 이다 */
         author: { handle: string; displayName: string | null } | null;
         samples: Sample[];
+        /** kind=answer 일 때 문항. 기대 답은 안 온다 */
+        answerItems: Array<{ idx: number; points: number; prompt: string }>;
+        /** kind=blank 일 때 비운 줄을 지운 골격. 원본은 안 온다 */
+        blank: { lines: string[]; blankLines: number[]; language: string | null } | null;
         testcaseCount: number;
         canSubmit: boolean;
     } | null>(null);
@@ -215,6 +221,21 @@
             </p>
         {:else if !detail.canSubmit}
             <p class="rounded-md bg-zinc-100 px-4 py-3 text-sm dark:bg-zinc-900">지금은 제출할 수 없는 문제입니다.</p>
+        {:else if p.kind === "answer"}
+            <AnswerSubmit problemId={id} items={detail.answerItems ?? []} />
+        {:else if p.kind === "blank"}
+            {#if detail.blank}
+                <BlankSubmit
+                    problemId={id}
+                    lines={detail.blank.lines}
+                    blankLines={detail.blank.blankLines}
+                    language={detail.blank.language}
+                />
+            {:else}
+                <p class="rounded-md bg-zinc-100 px-4 py-3 text-sm text-zinc-500 dark:bg-zinc-900">
+                    아직 골격이 없습니다. 출제자가 채워야 풀 수 있습니다.
+                </p>
+            {/if}
         {:else}
             <div class="mb-2 flex items-center gap-3">
                 <select
