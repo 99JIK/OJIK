@@ -4,6 +4,7 @@
     import { session } from "$lib/session.svelte";
     import { formatDate } from "$lib/format";
     import { PRESET_LABEL, SCORING_LABEL, type CollectionPreset } from "@ojik/core";
+    import Markdown from "$lib/Markdown.svelte";
 
     /**
      * 교재, 문제집, 대회, 코딩테스트의 상세를 한 화면으로 그린다.
@@ -141,9 +142,9 @@
     </div>
 
     {#if c.description}
-        <p class="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-            {c.description}
-        </p>
+        <div class="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
+            <Markdown source={c.description} compact />
+        </div>
     {/if}
 
     {#if c.scoring !== "none"}
@@ -204,7 +205,7 @@
                         {#if item.heading}
                             <h2 class="mb-2 font-semibold">{item.heading}</h2>
                         {/if}
-                        <div class="whitespace-pre-wrap text-sm leading-relaxed">{item.body}</div>
+                        <Markdown source={item.body ?? ""} />
                     </section>
                 {:else}
                     <a

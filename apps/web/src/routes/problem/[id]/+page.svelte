@@ -4,6 +4,7 @@
     import { get, post } from "$lib/api";
     import { session } from "$lib/session.svelte";
     import { meta } from "$lib/meta.svelte";
+    import Markdown from "$lib/Markdown.svelte";
 
     /**
      * 에디터는 제출 영역이 실제로 그려질 때만 받아 온다.
@@ -153,18 +154,18 @@
     <section class="mt-8 space-y-6">
         <div>
             <h2 class="mb-2 text-lg font-semibold">문제</h2>
-            <div class="whitespace-pre-wrap text-sm leading-relaxed">{p.statement}</div>
+            <Markdown source={p.statement} />
         </div>
         {#if p.inputDesc}
             <div>
                 <h2 class="mb-2 text-lg font-semibold">입력</h2>
-                <div class="whitespace-pre-wrap text-sm leading-relaxed">{p.inputDesc}</div>
+                <Markdown source={p.inputDesc} />
             </div>
         {/if}
         {#if p.outputDesc}
             <div>
                 <h2 class="mb-2 text-lg font-semibold">출력</h2>
-                <div class="whitespace-pre-wrap text-sm leading-relaxed">{p.outputDesc}</div>
+                <Markdown source={p.outputDesc} />
             </div>
         {/if}
 
@@ -184,7 +185,7 @@
         {#if p.hint}
             <div>
                 <h2 class="mb-2 text-lg font-semibold">힌트</h2>
-                <div class="whitespace-pre-wrap text-sm leading-relaxed">{p.hint}</div>
+                <Markdown source={p.hint} />
             </div>
         {/if}
     </section>
