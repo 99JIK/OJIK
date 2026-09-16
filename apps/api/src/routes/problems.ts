@@ -3,7 +3,7 @@ import { z } from "zod";
 import { v } from "../validate";
 import { and, asc, desc, eq, ilike, sql, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import { PROBLEM_LIMITS, CHECKER_TYPES, atLeast } from "@ojik/core";
+import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, atLeast, blankOut } from "@ojik/core";
 import { problems, testcases, tags, problemTags, submissions, collections, enqueue } from "@ojik/db";
 import { db } from "../db";
 import { requireAuth, requireRole, type AuthEnv } from "../auth";
@@ -36,6 +36,12 @@ const ProblemBody = z.object({
     tagIds: z.array(z.number().int().positive()).default([]),
     /** 이 강의 전용 문제로 만든다. null 이면 공개 아카이브 문제. 강사는 반드시 채워야 한다 */
     ownerCollectionId: z.number().int().positive().nullable().optional(),
+
+    kind: z.enum(PROBLEM_KINDS).default("code"),
+    /** kind=blank 일 때 원본 코드와 비울 줄 번호, 채점 언어 */
+    blankTemplate: z.string().nullable().optional(),
+    blankLines: z.array(z.number().int().positive()).nullable().optional(),
+    blankLanguage: z.enum(LANGUAGE_IDS).nullable().optional(),
 });
 
 const TestcaseBody = z.object({
@@ -93,6 +99,35 @@ async function loadEditable(user: User, id: number): Promise<Problem> {
         throw new HTTPException(403, { message: "이 문제를 고칠 권한이 없습니다" });
     }
     return p;
+}
+
+/**
+ * 문제 행에서 답이 드러나는 칸을 지운다.
+ *
+ * blankTemplate 은 빈칸의 정답이 그대로 든 원본이다. 문제 상세는 로그인만 하면 누구나
+ * 부르는 곳이라, 행을 통째로 내보내면 빈칸 답이 같이 나간다. 편집 화면은 이 함수를 안 거치는
+ * 다른 라우트에서 받아 간다.
+ */
+function stripAnswers(p: Problem): Omit<Problem, "blankTemplate"> {
+    const { blankTemplate: _drop, ...rest } = p;
+    void _drop;
+    return rest;
+}
+
+/**
+ * 유형에 맞는 칸이 채워졌는지.
+ *
+ * 빈칸 문제를 원본 없이 저장할 수 있으면, 학생이 제출할 때가 되어서야 409 를 본다.
+ * 만들 때 막는 게 낫다.
+ */
+function assertKindFields(f: { kind?: string; blankTemplate?: string | null; blankLanguage?: string | null }): void {
+    if (f.kind !== "blank") return;
+    if (!f.blankTemplate?.trim()) {
+        throw new HTTPException(400, { message: "빈칸 문제는 원본 코드가 있어야 합니다" });
+    }
+    if (!f.blankLanguage) {
+        throw new HTTPException(400, { message: "빈칸 문제는 채점 언어를 정해야 합니다" });
+    }
 }
 
 export const problemRoutes = new Hono<AuthEnv>()
@@ -188,11 +223,20 @@ export const problemRoutes = new Hono<AuthEnv>()
         // 비공개 문제는 403 이 아니라 404 로 답한다. 존재 여부 자체를 흘리지 않는다
         if (!access.canView) throw new HTTPException(404, { message: "문제를 찾을 수 없습니다" });
 
-        const sampleRows = await db
-            .select()
-            .from(testcases)
-            .where(and(eq(testcases.problemId, id), eq(testcases.isSample, true)))
-            .orderBy(asc(testcases.idx));
+        /*
+         * 예제.
+         *
+         * 단답형은 여기를 안 쓴다. 문항 전체가 아래 answerItems 로 따로 나가고, 기댓값은
+         * 절대 안 나간다. 예제 목록에 output 이 들어 있어서, 그대로 두면 답이 그냥 보인다.
+         */
+        const sampleRows =
+            p.kind === "answer"
+                ? []
+                : await db
+                      .select()
+                      .from(testcases)
+                      .where(and(eq(testcases.problemId, id), eq(testcases.isSample, true)))
+                      .orderBy(asc(testcases.idx));
 
         const samples = await Promise.all(
             sampleRows.map(async (t) => ({
@@ -201,6 +245,44 @@ export const problemRoutes = new Hono<AuthEnv>()
                 output: await readTestcaseFile(id, t.idx, "out").catch(() => ""),
             })),
         );
+
+        /*
+         * 단답형 문항. 지문과 배점만 나간다.
+         *
+         * 테스트케이스의 input 이 문항 지문이고 output 이 기대 답이다. output 은 여기서
+         * 절대 안 내보낸다. 운영자도 마찬가지다. 운영자는 테스트케이스 편집 화면에서 본다.
+         */
+        const answerItems =
+            p.kind === "answer"
+                ? await Promise.all(
+                      (
+                          await db
+                              .select()
+                              .from(testcases)
+                              .where(eq(testcases.problemId, id))
+                              .orderBy(asc(testcases.idx))
+                      ).map(async (t) => ({
+                          idx: t.idx,
+                          points: t.points,
+                          prompt: await readTestcaseFile(id, t.idx, "in").catch(() => ""),
+                      })),
+                  )
+                : [];
+
+        /*
+         * 빈칸 문제의 골격. 비운 줄은 지워서 내보낸다.
+         *
+         * 원본을 통째로 내보내면 답이 그대로 보인다. 운영자에게도 여기서는 안 준다.
+         * 고칠 때는 문제 편집 화면이 따로 받아 간다.
+         */
+        const blank =
+            p.kind === "blank" && p.blankTemplate
+                ? {
+                      lines: blankOut(p.blankTemplate, p.blankLines ?? []),
+                      blankLines: p.blankLines ?? [],
+                      language: p.blankLanguage,
+                  }
+                : null;
 
         const tagRows = await db
             .select({ id: tags.id, slug: tags.slug, name: tags.name })
@@ -214,8 +296,10 @@ export const problemRoutes = new Hono<AuthEnv>()
             .where(eq(testcases.problemId, id));
 
         return c.json({
-            problem: p,
+            problem: stripAnswers(p),
             samples,
+            answerItems,
+            blank,
             tags: tagRows,
             testcaseCount: count?.n ?? 0,
             canSubmit: access.canSubmit,
@@ -234,6 +318,7 @@ export const problemRoutes = new Hono<AuthEnv>()
         const { tagIds, ...fields } = body;
 
         await assertCanCreate(user, fields.ownerCollectionId ?? null);
+        assertKindFields(fields);
 
         const p = await db.transaction(async (tx) => {
             const [row] = await tx

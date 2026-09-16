@@ -31,7 +31,13 @@ export const submissions = pgTable(
          *  스코어보드 집계 범위이자 우선순위 근거이고, 결과 공개 규칙도 여기서 나온다 */
         collectionId: integer().references(() => collections.id, { onDelete: "set null" }),
 
-        language: languageEnum().notNull(),
+        /**
+         * 제출 언어. 단답형(problems.kind=answer)에는 없다.
+         *
+         * 목록에 가짜 언어를 넣는 것도 생각했지만, 그러면 언어별 통계에 단답형이 섞이고
+         * 채점 현황의 언어 필터에 뜻 없는 항목이 생긴다. 없는 것은 없다고 둔다.
+         */
+        language: languageEnum(),
         sourceCode: text().notNull(),
         sourceBytes: integer().notNull(),
 

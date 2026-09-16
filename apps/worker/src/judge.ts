@@ -76,6 +76,8 @@ export async function judge(
         return;
     }
 
+    // 단답형은 큐를 안 타므로 여기 올 일이 없다. 와 버렸으면 데이터가 어긋난 것이다
+    if (!sub.language) throw new JudgeError(`제출 ${sub.id} 에 언어가 없습니다. 단답형이 큐에 들어왔습니까?`);
     const lang = requireLanguage(sub.language);
     await db
         .update(submissions)

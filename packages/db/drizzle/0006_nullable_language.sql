@@ -1,0 +1,1 @@
+ALTER TABLE "submissions" ALTER COLUMN "language" DROP NOT NULL;
