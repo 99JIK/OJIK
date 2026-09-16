@@ -42,7 +42,8 @@ interface TcOutcome {
     memoryKb: number;
     points: number;
     /** DB 에는 안 들어간다. 처음 실패한 케이스의 것만 제출 행에 남긴다.
-     *  케이스마다 저장하면 출력이 큰 문제에서 소스보다 수십 배 무거워진다 */
+     *  케이스마다 저장하면 출력이 큰 문제에서 소스보다 수십 배 무거워진다.
+     *  숨은 케이스에서는 아예 null 이다. 아래 keepOutput 참고 */
     stdout: string | null;
     stderr: string | null;
 }
@@ -262,13 +263,25 @@ async function runOne(
     const meta = isolate.parseMeta(await readIfExists(path.join(box.hostMetaDir, metaName)));
     const outcome = isolate.classify(meta, limits);
 
+    /**
+     * 출력을 남기는 건 공개 케이스뿐이다.
+     *
+     * 숨은 케이스의 출력을 제출자에게 보여 주면 테스트케이스가 새어 나간다.
+     * print(input()) 처럼 입력을 그대로 뱉고 일부러 틀리면, 한 제출에 케이스 하나씩
+     * 뽑아낼 수 있다. stderr 도 같은 경로라 함께 막는다.
+     *
+     * 대신 숨은 케이스에서 런타임 에러가 나면 제출자가 스택 트레이스를 못 본다.
+     * 케이스 유출보다는 이쪽이 낫다고 보고 막는 쪽을 택했다.
+     */
+    const keepOutput = tc.isSample;
+
     const base = {
         idx: tc.idx,
         testcaseId: tc.id,
         timeMs: Math.round(meta.time * 1000),
         memoryKb: meta.memoryKb,
         points: 0,
-        stderr: snippet(await readIfExists(path.join(box.hostDir, "stderr"))),
+        stderr: keepOutput ? snippet(await readIfExists(path.join(box.hostDir, "stderr"))) : null,
     };
 
     if (outcome === "internal_error") {
@@ -289,7 +302,7 @@ async function runOne(
         ...base,
         verdict: res.ok ? "accepted" : "wrong_answer",
         points: res.ok ? tc.points : 0,
-        stdout: snippet(actual.toString("utf8")),
+        stdout: keepOutput ? snippet(actual.toString("utf8")) : null,
     };
 }
 

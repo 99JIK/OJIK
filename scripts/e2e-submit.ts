@@ -86,8 +86,74 @@ async function main() {
         }
     }
 
+    console.log("\n== 테스트케이스 유출 ==");
+    if (await leakCheck(problem.id)) pass++;
+    else fail++;
+
     console.log(`\n통과 ${pass}, 실패 ${fail}`);
     process.exit(fail === 0 ? 0 : 1);
+}
+
+/**
+ * 숨은 케이스에서 입력을 그대로 뱉고 일부러 틀리는 코드를 넣어 본다.
+ *
+ * 한때 실제로 샜다. 채점기가 케이스마다 stdout/stderr 을 저장했고 제출자가 그걸 볼 수 있어서,
+ * print(input()) 으로 한 제출에 케이스 하나씩 뽑을 수 있었다. 공개 예제는 그대로 보여야 하므로
+ * "아무것도 안 보여 주기" 로 막으면 안 된다. 그래서 여기서 둘 다 본다.
+ */
+async function leakCheck(problemId: number): Promise<boolean> {
+    const d = await call<{
+        samples: Array<{ idx: number; input: string }>;
+        testcaseCount: number;
+    }>(`/problems/${problemId}`);
+
+    const sampleIdx = new Set(d.samples.map((t) => t.idx));
+    if (d.samples.length === 0 || d.testcaseCount <= d.samples.length) {
+        console.log("  [SKIP] 공개 예제와 숨은 케이스가 모두 있어야 확인할 수 있습니다");
+        return true;
+    }
+
+    // 공개 예제는 정답을 내고, 그 외에는 읽은 입력을 뱉으며 틀린다
+    const okInputs = d.samples.map((t) => t.input.trim().split(/\s+/).map(Number));
+    const src =
+        [
+            "import sys",
+            `SAMPLES = ${JSON.stringify(okInputs)}`,
+            "vals = list(map(int, sys.stdin.read().split()))",
+            "if vals in SAMPLES:",
+            "    print(sum(vals))",
+            "else:",
+            '    print("LEAK", *vals)',
+            '    print("LEAK", *vals, file=sys.stderr)',
+        ].join("\n") + "\n";
+
+    const r = await call<{ submission: { id: number } }>("/submissions", {
+        method: "POST",
+        body: JSON.stringify({ problemId, language: "python3", sourceCode: src }),
+    });
+    const verdict = await waitVerdict(r.submission.id, 120_000);
+    if (verdict !== "wrong_answer") {
+        console.log(`  [SKIP] 숨은 케이스에서 틀리게 만들지 못했습니다 (${verdict ?? "안 끝남"})`);
+        return true;
+    }
+
+    const s = await call<{
+        submission: { failedIdx: number | null; failedStdout: string | null; failedStderr: string | null };
+    }>(`/submissions/${r.submission.id}`);
+
+    const idx = s.submission.failedIdx;
+    if (idx === null || sampleIdx.has(idx)) {
+        console.log(`  [SKIP] 공개 예제에서 먼저 틀렸습니다 (idx ${idx})`);
+        return true;
+    }
+
+    const shown = `${s.submission.failedStdout ?? ""}${s.submission.failedStderr ?? ""}`;
+    if (shown.includes("LEAK")) {
+        console.log(`  [FAIL] 숨은 케이스 ${idx} 의 입력이 제출자에게 보입니다: ${shown.trim()}`);
+        return false;
+    }
+    console.log(`  [OK]   숨은 케이스 ${idx} 의 출력이 제출자에게 안 보임`);
+    return true;
 }
 
 void main();

@@ -99,22 +99,31 @@
         </p>
     {/if}
 
-    {#if s.failedIdx !== null && s.failedStdout !== null}
+    <!-- 몇 번째에서 틀렸는지는 늘 보여 준다. 출력은 공개 예제일 때만 채점기가 남긴다 -->
+    {#if s.failedIdx !== null}
         <section class="mt-6">
             <h2 class="mb-2 text-sm font-semibold">{s.failedIdx + 1}번 케이스에서 틀렸습니다</h2>
-            <div class="grid gap-3 sm:grid-cols-2">
-                <div>
-                    <h3 class="mb-1 text-xs text-zinc-500">내 출력</h3>
-                    <pre class="max-h-60 overflow-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.failedStdout}</pre>
+            {#if s.failedStdout !== null || s.failedStderr !== null}
+                <div class="grid gap-3 sm:grid-cols-2">
+                    {#if s.failedStdout !== null}
+                        <div>
+                            <h3 class="mb-1 text-xs text-zinc-500">내 출력</h3>
+                            <pre class="max-h-60 overflow-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.failedStdout}</pre>
+                        </div>
+                    {/if}
+                    {#if s.failedStderr}
+                        <div>
+                            <h3 class="mb-1 text-xs text-zinc-500">표준 오류</h3>
+                            <pre class="max-h-60 overflow-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.failedStderr}</pre>
+                        </div>
+                    {/if}
                 </div>
-                {#if s.failedStderr}
-                    <div>
-                        <h3 class="mb-1 text-xs text-zinc-500">표준 오류</h3>
-                        <pre class="max-h-60 overflow-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.failedStderr}</pre>
-                    </div>
-                {/if}
-            </div>
-            <p class="mt-2 text-xs text-zinc-400">정답 출력은 보여주지 않습니다.</p>
+                <p class="mt-2 text-xs text-zinc-400">정답 출력은 보여주지 않습니다.</p>
+            {:else}
+                <p class="text-xs text-zinc-400">
+                    공개 예제가 아니라서 출력은 보여주지 않습니다. 예제로 먼저 확인해 보세요.
+                </p>
+            {/if}
         </section>
     {/if}
 
