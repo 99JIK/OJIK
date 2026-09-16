@@ -235,6 +235,18 @@ npm run e2e:submit       # 제출부터 판정까지 실제 경로로
 **`db:generate` 를 잊으면 제출이 INSERT 에서 깨집니다.** `smoke:judge` 는 DB 를 안 거쳐서 이걸
 못 잡습니다. `npm test` 의 enum 테스트와 `e2e:submit` 이 잡습니다.
 
+### CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)가 푸시와 PR 에서 돕니다.
+타입 검사, 마이그레이션, 시드, 테스트, 빌드까지 실제 Postgres 를 붙여서 봅니다.
+
+마지막 단계로 `db:generate` 를 한 번 더 돌려 `packages/db/drizzle` 에 변경이 남는지 봅니다.
+남으면 스키마를 고치고 생성물을 안 만든 것이라 실패합니다.
+
+**채점 스모크는 CI 에서 안 돕니다.** `isolate` 가 cgroup v2 위임과 privileged 컨테이너를
+요구해서 GitHub 러너에서 안정적으로 못 돌립니다. 샌드박스는 실기에서 `npm run smoke:judge`,
+제출 경로는 `npm run e2e:submit` 으로 봅니다.
+
 ### 커밋
 
 ```
@@ -302,6 +314,7 @@ v0.1.0 은 채점은 됐지만 브라우저로 할 수 있는 일이 적었습�
 - 자동 테스트 51건 (판정 11, 큐 10, 순위표 10, 마크다운 13, enum 대조 7)
 - `smoke:judge` 41건. 등록된 전 언어를 정상, 시간 초과, 컴파일 오류로 한 번씩 실행
 - `e2e:submit` 추가. 전 언어를 API 로 실제 제출해 판정까지 확인하고, 숨은 케이스 유출도 함께 봄
+- GitHub Actions CI. 타입 검사, 마이그레이션, 시드, 테스트, 빌드, 생성물 최신 여부
 
 **고친 것**
 
@@ -326,7 +339,7 @@ npm run runners:build    # pypy, node 이미지 추가
 - 이메일 인증 없음. 가입 시 주소 소유를 확인하지 않음
 - 부분점수와 스페셜 저지는 스키마만 있고 화면과 채점 경로가 없음
 - SVG 그림판 미구현. 도식은 mermaid 로만
-- 학교 그룹, 풀이 공유, GitHub Actions CI 미구현
+- 학교 그룹, 풀이 공유 미구현
 
 ### v0.1.0 (2026-09-16) 최초 구현
 

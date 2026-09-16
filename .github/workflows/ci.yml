@@ -1,0 +1,85 @@
+name: ci
+
+# 푸시와 PR 에서 돈다. 사람이 로컬에서 돌리는 걸 잊어도 여기서 걸린다.
+#
+# 채점 스모크(smoke:judge)는 여기서 안 돈다. isolate 가 cgroup v2 위임과 privileged 컨테이너를
+# 요구해서 GitHub 러너에서 안정적으로 못 돌린다. 샌드박스는 실기에서 npm run smoke:judge 로 본다.
+# 대신 DB 를 붙여서 마이그레이션, 큐, 순위표, enum 대조까지 실제 Postgres 로 돌린다.
+
+on:
+    push:
+        branches: ["**"]
+        tags: ["v*"]
+    pull_request:
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+
+        services:
+            postgres:
+                image: postgres:17-alpine
+                env:
+                    POSTGRES_USER: oj
+                    POSTGRES_PASSWORD: oj
+                    POSTGRES_DB: oj
+                    POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd "pg_isready -U oj -d oj"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 10
+
+        env:
+            # 서비스 컨테이너는 러너의 localhost:5432 로 붙는다. 개발 PC 의 55432 와 다르다
+            DATABASE_URL: postgres://oj:oj@localhost:5432/oj
+            DATA_DIR: ./var/data
+            BOX_ROOT: ./var/boxes
+            JWT_SECRET: ci-only-secret-not-used-anywhere-else-32chars
+            LOG_LEVEL: warn
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: npm
+
+            - run: npm ci
+
+            # loadEnv 가 .env 를 찾는다. CI 에서는 위 env 를 그대로 쓰되 파일도 만들어 둔다
+            - name: .env 준비
+              run: |
+                  cp .env.example .env
+                  sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${DATABASE_URL}|" .env
+                  sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|" .env
+                  sed -i "s|^LOG_LEVEL=.*|LOG_LEVEL=${LOG_LEVEL}|" .env
+                  mkdir -p "${DATA_DIR}" "${BOX_ROOT}"
+
+            - run: npm run typecheck
+
+            - name: 마이그레이션
+              run: npm run db:migrate
+
+            - name: 시드
+              run: npm run db:seed
+
+            # enum 대조가 여기 들어 있다. core 상수만 고치고 db:generate 를 잊으면 걸린다
+            - run: npm test
+
+            - run: npm run build
+
+            # 생성물을 커밋 안 하고 넘어가는 걸 막는다. drizzle 은 스냅샷까지 같이 있어야 다음
+            # generate 가 옳은 diff 를 낸다
+            - name: 마이그레이션 생성물이 최신인지
+              run: |
+                  npm run db:generate
+                  if [ -n "$(git status --porcelain packages/db/drizzle)" ]; then
+                      echo "스키마를 고치고 npm run db:generate 를 안 돌렸습니다."
+                      git status --porcelain packages/db/drizzle
+                      git diff -- packages/db/drizzle
+                      exit 1
+                  fi
