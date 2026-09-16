@@ -25,6 +25,8 @@
 
     let detail = $state<{
         problem: ProblemDetail;
+        /** 출제자. 계정이 지워졌으면 null 이다 */
+        author: { handle: string; displayName: string | null } | null;
         samples: Sample[];
         testcaseCount: number;
         canSubmit: boolean;
@@ -136,7 +138,15 @@
 {:else}
     {@const p = detail.problem}
     <div class="flex items-baseline justify-between gap-4">
-        <h1 class="text-2xl font-bold">{p.id}. {p.title}</h1>
+        <div>
+            <h1 class="text-2xl font-bold">{p.id}. {p.title}</h1>
+            {#if detail.author}
+                <!-- 출제자를 밝혀 둔다. 문제에 문제가 있을 때 누구에게 말할지가 분명해진다 -->
+                <p class="mt-1 text-xs text-zinc-400">
+                    출제 <a href="/user/{detail.author.handle}" class="hover:underline">{detail.author.handle}</a>
+                </p>
+            {/if}
+        </div>
         <div class="flex shrink-0 gap-3 text-sm">
             <a href="/problem/{p.id}/solutions" class="text-blue-600 hover:underline dark:text-blue-400">
                 풀이

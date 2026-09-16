@@ -201,6 +201,23 @@ async function main() {
         ok("빈 답은 막는다 (400)", empty.status === 400, `${empty.status}`);
     }
 
+    console.log("\n== 출제자 ==");
+    {
+        // 문제에 문제가 있을 때 누구에게 말할지가 분명해야 한다
+        const list = await req<{ problems: Array<{ id: number; authorHandle: string | null }> }>(
+            student,
+            "/problems?limit=5",
+        );
+        ok("목록에 출제자가 있다", (list.body.problems ?? []).every((p) => "authorHandle" in p));
+
+        const first = (list.body.problems ?? [])[0];
+        if (first) {
+            const d = await req<{ author: { handle: string } | null }>(student, `/problems/${first.id}`);
+            ok("상세의 출제자가 목록과 같다", d.body.author?.handle === first.authorHandle,
+                `${d.body.author?.handle} vs ${first.authorHandle}`);
+        }
+    }
+
     console.log("\n== 빈칸 채우기 ==");
     {
         const template = ["#include <stdio.h>", "int main(void){", "    int a,b;", "    BLANK", "    return 0;", "}"].join(

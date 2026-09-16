@@ -4,8 +4,12 @@ import { v } from "../validate";
 import { and, asc, desc, eq, ilike, sql, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, atLeast, blankOut } from "@ojik/core";
-import { problems, testcases, tags, problemTags, submissions, collections, enqueue } from "@ojik/db";
+import { problems, testcases, tags, problemTags, submissions, collections, users, enqueue } from "@ojik/db";
 import { db } from "../db";
+import { alias } from "drizzle-orm/pg-core";
+
+/** 목록에서 출제자를 조인한다. users 를 다른 이름으로 한 번 더 붙이는 것뿐이다 */
+const authors = alias(users, "authors");
 import { requireAuth, requireRole, type AuthEnv } from "../auth";
 import { problemAccess, collectionAccess, canEditProblem } from "../access";
 import type { User, Problem } from "@ojik/db";
@@ -185,8 +189,12 @@ export const problemRoutes = new Hono<AuthEnv>()
                 acceptedCount: problems.acceptedCount,
                 submissionCount: problems.submissionCount,
                 isPublic: problems.isPublic,
+                kind: problems.kind,
+                /** 출제자. 지운 계정이면 null 이다 (createdBy 가 set null) */
+                authorHandle: authors.handle,
             })
             .from(problems)
+            .leftJoin(authors, eq(authors.id, problems.createdBy))
             .where(conds.length ? and(...conds) : undefined)
             .orderBy(order)
             .limit(q.limit)
@@ -284,6 +292,13 @@ export const problemRoutes = new Hono<AuthEnv>()
                   }
                 : null;
 
+        const [author] = p.createdBy
+            ? await db
+                  .select({ handle: users.handle, displayName: users.displayName })
+                  .from(users)
+                  .where(eq(users.id, p.createdBy))
+            : [];
+
         const tagRows = await db
             .select({ id: tags.id, slug: tags.slug, name: tags.name })
             .from(problemTags)
@@ -297,6 +312,7 @@ export const problemRoutes = new Hono<AuthEnv>()
 
         return c.json({
             problem: stripAnswers(p),
+            author: author ?? null,
             samples,
             answerItems,
             blank,

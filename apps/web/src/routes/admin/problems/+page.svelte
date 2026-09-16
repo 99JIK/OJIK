@@ -2,6 +2,7 @@
     import { get, post } from "$lib/api";
     import { acceptRate } from "$lib/format";
     import type { ProblemSummary } from "$lib/types";
+    import { PROBLEM_KIND_LABEL } from "@ojik/core";
 
     let rows = $state<ProblemSummary[]>([]);
     let error = $state<string | null>(null);
@@ -74,6 +75,7 @@
             <tr>
                 <th class="w-16 font-medium">번호</th>
                 <th class="font-medium">제목</th>
+                <th class="w-24 font-medium">출제자</th>
                 <th class="w-20 font-medium">공개</th>
                 <th class="w-24 text-right font-medium">맞힌 수</th>
                 <th class="w-24 text-right font-medium">정답 비율</th>
@@ -86,6 +88,18 @@
                     <td class="tabular-nums text-zinc-500">{p.id}</td>
                     <td>
                         <a href="/admin/problems/{p.id}" class="hover:underline">{p.title}</a>
+                        {#if p.kind !== "code"}
+                            <span class="ml-1 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                                {PROBLEM_KIND_LABEL[p.kind]}
+                            </span>
+                        {/if}
+                    </td>
+                    <td class="text-zinc-500">
+                        {#if p.authorHandle}
+                            <a href="/user/{p.authorHandle}" class="hover:underline">{p.authorHandle}</a>
+                        {:else}
+                            <span class="text-zinc-400">-</span>
+                        {/if}
                     </td>
                     <td>
                         {#if p.isPublic}
@@ -109,7 +123,7 @@
                     </td>
                 </tr>
             {:else}
-                <tr><td colspan="6" class="py-8 text-center text-zinc-400">문제가 없습니다</td></tr>
+                <tr><td colspan="7" class="py-8 text-center text-zinc-400">문제가 없습니다</td></tr>
             {/each}
         </tbody>
     </table>
