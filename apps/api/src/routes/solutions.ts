@@ -7,7 +7,7 @@ import { SOLUTION_LIMITS, SOLUTION_DAY_TIMEZONE, dailyWriteLimit, containsLink }
 import { solutions, solutionComments, submissions, problems, users } from "@ojik/db";
 import { db } from "../db";
 import { requireAuth, type AuthEnv } from "../auth";
-import { problemAccess } from "../access";
+import { problemAccess, verdictVisible } from "../access";
 import type { User } from "@ojik/db";
 
 /**
@@ -44,19 +44,31 @@ function isStaff(user: User): boolean {
     return user.role === "admin" || user.role === "staff";
 }
 
-/** 이 사용자가 이 문제를 맞힌 적이 있는지. submissions 의 부분 인덱스가 그대로 탄다 */
-async function hasSolved(userId: number, problemId: number): Promise<boolean> {
-    const [row] = await db
-        .select({ n: sql<number>`count(*)::int` })
+/**
+ * 이 사용자가 이 문제를 맞힌 적이 있는지. submissions 의 부분 인덱스가 그대로 탄다.
+ *
+ * 판정이 아직 안 공개된 제출은 안 센다. 코딩테스트처럼 결과를 끝까지 감추는 컬렉션에서,
+ * 맞은 제출을 세어 버리면 풀이 화면이 열리는 것만으로 "나 맞았구나"를 알게 된다.
+ * 감춰야 할 판정이 옆문으로 새는 셈이라, 여기서도 같은 규칙을 따른다.
+ *
+ * 맞은 제출은 보통 0~2건이라 건별로 확인해도 부담이 없다.
+ */
+async function hasSolved(user: User, problemId: number): Promise<boolean> {
+    const rows = await db
+        .select({ collectionId: submissions.collectionId })
         .from(submissions)
         .where(
             and(
-                eq(submissions.userId, userId),
+                eq(submissions.userId, user.id),
                 eq(submissions.problemId, problemId),
                 eq(submissions.verdict, "accepted"),
             ),
         );
-    return (row?.n ?? 0) > 0;
+
+    for (const r of rows) {
+        if (await verdictVisible(user, r.collectionId)) return true;
+    }
+    return false;
 }
 
 /**
@@ -73,7 +85,7 @@ async function gate(user: User, problemId: number): Promise<void> {
     if (!access.canView) throw new HTTPException(404, { message: "문제를 찾을 수 없습니다" });
 
     if (isStaff(user)) return;
-    if (!(await hasSolved(user.id, problemId))) {
+    if (!(await hasSolved(user, problemId))) {
         throw new HTTPException(403, { message: "이 문제를 맞힌 뒤에 풀이를 볼 수 있습니다" });
     }
 }

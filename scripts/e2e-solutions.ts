@@ -1,5 +1,7 @@
 import { loadEnv } from "@ojik/core/env";
 import { SOLUTION_LIMITS, dailyWriteLimit } from "@ojik/core";
+import { sql } from "drizzle-orm";
+import { createDb } from "@ojik/db";
 
 /**
  * 풀이 공유의 접근 규칙과 하루 한도를 실제 API 로 확인한다.
@@ -12,7 +14,8 @@ import { SOLUTION_LIMITS, dailyWriteLimit } from "@ojik/core";
  * 순수 계산은 tests/solutions.test.ts 가 본다. 이건 권한과 한도가 라우트에 제대로
  * 붙어 있는지를 본다. 규칙은 맞는데 미들웨어를 빠뜨리는 게 흔한 실수라서다.
  *
- * API 와 워커가 떠 있어야 한다. 테스트 계정의 오늘 글을 지우므로 개발 DB 에서만 쓸 것.
+ * API 와 워커가 떠 있어야 한다. 시작할 때 테스트 계정이 오늘 쓴 글과 댓글을 지우므로
+ * 개발 DB 에서만 쓸 것. 안 지우면 한도 검사가 한도를 채워 놔서 다음 실행이 바로 429 가 된다.
  */
 loadEnv();
 
@@ -74,7 +77,47 @@ async function waitJudged(s: Session, id: number): Promise<string | null> {
     return null;
 }
 
+/**
+ * 테스트 계정을 처음 상태로 되돌린다.
+ *
+ * 이걸 안 하면 두 번째 실행부터 결과가 달라진다. 한도 검사가 하루 한도를 다 채우고 끝나므로
+ * 다음 실행은 첫 글쓰기부터 429 고, 앞선 실행에서 맞힌 문제는 "안 맞힌 사람" 검사에 못 쓴다.
+ * 한도는 하루 단위라 그냥 다시 돌려서는 못 고친다.
+ *
+ * API 로는 지울 수단이 없어 DB 를 직접 만진다. 캐시 컬럼은 scripts/recount.ts 와 같은 식으로
+ * 다시 센다. 개발 DB 전용이라는 게 여기서 나온다.
+ */
+async function resetStudent(): Promise<void> {
+    const url = process.env.DATABASE_URL;
+    if (!url) throw new Error("DATABASE_URL 이 없습니다.");
+    const h = createDb(url, { max: 2 });
+    const who = sql`(SELECT user_id FROM user_emails WHERE email = 'student@example.com')`;
+    try {
+        await h.db.transaction(async (tx) => {
+            await tx.execute(sql`DELETE FROM solution_comments WHERE user_id IN ${who}`);
+            await tx.execute(sql`DELETE FROM solutions WHERE user_id IN ${who}`);
+            await tx.execute(sql`DELETE FROM submissions WHERE user_id IN ${who}`);
+            await tx.execute(sql`
+                UPDATE users u SET
+                    solved_count = (SELECT count(DISTINCT s.problem_id)::int FROM submissions s
+                                    WHERE s.user_id = u.id AND s.verdict = 'accepted'),
+                    submission_count = (SELECT count(*)::int FROM submissions s WHERE s.user_id = u.id)
+            `);
+            await tx.execute(sql`
+                UPDATE problems p SET
+                    accepted_count = (SELECT count(DISTINCT s.user_id)::int FROM submissions s
+                                      WHERE s.problem_id = p.id AND s.verdict = 'accepted'),
+                    submission_count = (SELECT count(*)::int FROM submissions s WHERE s.problem_id = p.id)
+            `);
+        });
+    } finally {
+        await h.close();
+    }
+}
+
 async function main() {
+    await resetStudent();
+
     const admin = await login("admin@example.com", "admin1234");
     const student = await login("student@example.com", "student1234");
 
@@ -82,16 +125,25 @@ async function main() {
     const list = await req<{ problems: Array<{ id: number; title: string }> }>(student, "/problems?limit=50");
     const problems = (list.body as { problems: Array<{ id: number; title: string }> }).problems;
 
+    // 아래 확인용 소스(입력의 모든 수를 더함)로 맞힐 수 있는 문제를 고른다.
+    // 아무거나 집으면 오답이 나서 "맞힌 뒤" 검사가 통째로 건너뛰어진다
     let target: { id: number; title: string } | null = null;
     for (const p of problems) {
-        const r = await req(student, `/solutions?problemId=${p.id}`);
-        if (r.status === 403) {
+        const d = await req<{ samples: Array<{ input: string; output: string }> }>(student, `/problems/${p.id}`);
+        const samples = (d.body as { samples?: Array<{ input: string; output: string }> }).samples ?? [];
+        if (samples.length === 0) continue;
+        const solvable = samples.every((t) => {
+            const nums = t.input.trim().split(/\s+/).map(Number);
+            if (nums.some(Number.isNaN)) return false;
+            return String(nums.reduce((a, b) => a + b, 0)) === t.output.trim();
+        });
+        if (solvable) {
             target = p;
             break;
         }
     }
     if (!target) {
-        console.log("  [SKIP] student 가 안 푼 문제가 없습니다. npm run db:seed 로 새 DB 에서 돌리세요.");
+        console.log("  [SKIP] 확인용 소스로 맞힐 수 있는 문제가 없습니다. npm run db:seed 를 먼저 돌리세요.");
         process.exit(0);
     }
     console.log(`문제 ${target.id} "${target.title}" 로 확인합니다.\n`);
