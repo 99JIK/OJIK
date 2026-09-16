@@ -3,6 +3,7 @@
     import { get, put, patch, del } from "$lib/api";
     import { PRESET_LABEL, type CollectionPreset } from "@ojik/core";
     import MarkdownInput from "$lib/MarkdownInput.svelte";
+    import RosterUpload from "$lib/RosterUpload.svelte";
     import type { ProblemSummary } from "$lib/types";
 
     /**
@@ -242,7 +243,10 @@
             <span class="text-xs text-zinc-400">{PRESET_LABEL[preset]}</span>
             <h2 class="text-lg font-semibold">{title}</h2>
         </div>
-        <div class="flex gap-3 text-sm">
+        <div class="flex flex-wrap gap-3 text-sm">
+            <a href="/admin/collections/{id}/scores" class="text-blue-600 hover:underline dark:text-blue-400">
+                성적표
+            </a>
             <a href="/c/{slug}" class="text-zinc-500 hover:underline">보기</a>
             <a href="/admin/collections" class="text-zinc-500 hover:underline">목록으로</a>
         </div>
@@ -458,7 +462,11 @@
             </p>
         {/if}
 
-        <h4 class="mt-6 mb-2 text-sm font-medium">명단 등록</h4>
+        <h4 class="mt-6 mb-2 text-sm font-medium">파일로 등록</h4>
+        <RosterUpload collectionId={id} onchange={loadMembers} />
+
+        <h4 class="mt-6 mb-2 text-sm font-medium">아이디로 등록</h4>
+        <p class="mb-2 text-xs text-zinc-400">이미 가입한 사람만 넣습니다. 계정을 만들려면 위 파일 등록을 쓰세요.</p>
         <textarea
             bind:value={handles}
             rows="4"

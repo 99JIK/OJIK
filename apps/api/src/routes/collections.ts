@@ -11,6 +11,10 @@ import {
     JOIN_POLICIES,
     VISIBILITIES,
     MEMBER_ROLES,
+    parseRoster,
+    makeTempPassword,
+    resultCsv,
+    ROSTER_MAX_ROWS,
     ITEM_KINDS,
     PRESET_DEFAULTS,
     validateAxes,
@@ -21,6 +25,7 @@ import {
 import {
     collections,
     collectionItems,
+    userEmails,
     collectionMembers,
     problems,
     submissions,
@@ -32,7 +37,7 @@ import { alias } from "drizzle-orm/pg-core";
 
 /** 목록에서 만든 사람을 조인한다 */
 const owners = alias(users, "owners");
-import { requireAuth, requireRole, type AuthEnv } from "../auth";
+import { requireAuth, requireRole, hashPassword, type AuthEnv } from "../auth";
 import { collectionAccess, canSeeItems } from "../access";
 import type { User, Collection } from "@ojik/db";
 
@@ -510,6 +515,171 @@ export const collectionRoutes = new Hono<AuthEnv>()
             return c.json({ member: row });
         },
     )
+
+    /**
+     * 명단 파일로 한 번에 등록. 계정이 없는 사람은 만들어 준다.
+     *
+     * 지금까지는 이미 가입한 사람만 넣을 수 있어서, 수업 첫 주에 전원이 먼저 가입해야 했다.
+     * 한 명이라도 안 하면 그 사람 화면이 비고, 강사는 왜 안 보이는지 모른다.
+     *
+     * 만든 계정의 임시 비밀번호는 여기서 한 번만 돌려준다. 해시만 저장하므로 다시 볼 수 없다.
+     * 강사가 받아서 나눠 주는 것이 전제다.
+     */
+    .post(
+        "/:id{[0-9]+}/roster",
+        requireAuth,
+        v("json", z.object({ csv: z.string().min(1).max(200_000), role: z.enum(MEMBER_ROLES).default("member") })),
+        async (c) => {
+            const id = Number(c.req.param("id"));
+            await requireManage(c.get("user")!, id);
+            const { csv, role } = c.req.valid("json");
+
+            const parsed = parseRoster(csv);
+            if (parsed.rows.length > ROSTER_MAX_ROWS) {
+                throw new HTTPException(413, {
+                    message: `한 번에 ${ROSTER_MAX_ROWS}명까지 올릴 수 있습니다 (${parsed.rows.length}명).`,
+                });
+            }
+
+            const created: Array<{ handle: string; email: string; name: string; password: string }> = [];
+            const linked: string[] = [];
+            const errors = [...parsed.errors];
+
+            for (const row of parsed.rows) {
+                /*
+                 * 한 사람씩 트랜잭션을 연다.
+                 *
+                 * 500명을 한 트랜잭션으로 묶으면 한 줄이 어긋났을 때 전부 되돌아간다.
+                 * 명단은 부분 성공이 맞다. 되는 사람은 넣고 안 되는 줄만 알려 준다.
+                 */
+                try {
+                    await db.transaction(async (tx) => {
+                        // 이미 있는 계정이면 그대로 명단에 넣는다. 비밀번호를 건드리지 않는다
+                        const [byEmail] = await tx
+                            .select({ userId: userEmails.userId })
+                            .from(userEmails)
+                            .where(sql`lower(${userEmails.email}) = ${row.email.toLowerCase()}`);
+                        const [byHandle] = await tx
+                            .select({ id: users.id })
+                            .from(users)
+                            .where(sql`lower(${users.handle}) = ${row.handle.toLowerCase()}`);
+
+                        let userId = byEmail?.userId ?? byHandle?.id ?? null;
+
+                        if (byEmail && byHandle && byEmail.userId !== byHandle.id) {
+                            throw new Error("이메일과 아이디가 서로 다른 계정입니다");
+                        }
+
+                        if (userId === null) {
+                            const password = makeTempPassword();
+                            const [u] = await tx
+                                .insert(users)
+                                .values({
+                                    handle: row.handle,
+                                    passwordHash: await hashPassword(password),
+                                    displayName: row.name || null,
+                                })
+                                .returning();
+                            await tx.insert(userEmails).values({ userId: u!.id, email: row.email, isPrimary: true });
+                            userId = u!.id;
+                            created.push({ handle: row.handle, email: row.email, name: row.name, password });
+                        } else {
+                            linked.push(row.handle);
+                        }
+
+                        await tx
+                            .insert(collectionMembers)
+                            .values({ collectionId: id, userId, role })
+                            .onConflictDoNothing();
+                    });
+                } catch (e) {
+                    errors.push({
+                        line: row.line,
+                        message: `${row.handle}: ${e instanceof Error ? e.message : String(e)}`,
+                    });
+                }
+            }
+
+            return c.json({
+                created: created.length,
+                linked: linked.length,
+                errors,
+                /** 만든 계정만. 나눠 줄 파일 내용이고 다시 받을 수 없다 */
+                passwordCsv: created.length > 0 ? resultCsv(created) : null,
+            });
+        },
+    )
+
+    /**
+     * 성적표. 학생 x 문제 표를 만든다.
+     *
+     * 순위표(scoreboard)와 다른 물건이다. 순위표는 대회용으로 등수와 페널티를 보고,
+     * 이건 수업용으로 누가 뭘 어디까지 했는지를 본다. 등수가 없고 안 푼 칸이 그대로 보인다.
+     *
+     * 점수는 그 문제에서 받은 최고 점수다. 여러 번 냈으면 제일 잘 본 것을 친다. 부분 점수가
+     * 있는 문제에서 마지막 제출이 더 나쁠 수 있는데, 그걸로 성적을 매기면 다시 내는 것이
+     * 손해가 된다.
+     */
+    .get("/:id{[0-9]+}/scores", requireAuth, async (c) => {
+        const id = Number(c.req.param("id"));
+        await requireManage(c.get("user")!, id);
+
+        const items = await db
+            .select({
+                problemId: collectionItems.problemId,
+                idx: collectionItems.idx,
+                title: problems.title,
+                kind: problems.kind,
+            })
+            .from(collectionItems)
+            .innerJoin(problems, eq(problems.id, collectionItems.problemId))
+            .where(and(eq(collectionItems.collectionId, id), eq(collectionItems.kind, "problem")))
+            .orderBy(asc(collectionItems.idx));
+
+        const members = await db
+            .select({
+                userId: collectionMembers.userId,
+                handle: users.handle,
+                displayName: users.displayName,
+                role: collectionMembers.role,
+            })
+            .from(collectionMembers)
+            .innerJoin(users, eq(users.id, collectionMembers.userId))
+            .where(eq(collectionMembers.collectionId, id))
+            .orderBy(users.handle);
+
+        /*
+         * 점수를 한 번에 모은다. 학생마다 질의하면 30명 x 10문제에서 질의가 300번이다.
+         *
+         * 제출이 없는 칸은 행이 안 나온다. 화면에서 없는 칸을 0 으로 그린다. 여기서
+         * 0 행을 만들어 내보내면 "안 냈다" 와 "내고 0점" 이 구분이 안 된다.
+         */
+        const problemIds = items.map((i) => i.problemId).filter((n): n is number => n !== null);
+        const userIds = members.map((m) => m.userId);
+
+        const cells =
+            problemIds.length > 0 && userIds.length > 0
+                ? await db
+                      .select({
+                          userId: submissions.userId,
+                          problemId: submissions.problemId,
+                          best: sql<number>`max(${submissions.score})::int`,
+                          tries: sql<number>`count(*)::int`,
+                          solved: sql<boolean>`bool_or(${submissions.verdict} = 'accepted')`,
+                      })
+                      .from(submissions)
+                      .where(
+                          and(
+                              inArray(submissions.userId, userIds),
+                              inArray(submissions.problemId, problemIds),
+                              eq(submissions.status, "done"),
+                          ),
+                      )
+                      .groupBy(submissions.userId, submissions.problemId)
+                : [];
+
+        return c.json({ items, members, cells });
+    })
 
     /** 멤버 한 명 제외. 제출 기록은 남는다 */
     .delete("/:id{[0-9]+}/members/:userId{[0-9]+}", requireAuth, async (c) => {
