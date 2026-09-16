@@ -114,6 +114,19 @@ async function cleanup(): Promise<void> {
     }
 }
 
+/** 업로드는 multipart 라 JSON 을 보내는 req 를 못 쓴다 */
+async function post(s: Session | null, file: File): Promise<{ status: number; body: unknown }> {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch(`${BASE}/uploads`, {
+        method: "POST",
+        headers: s ? { cookie: s.cookie } : {},
+        body: form,
+    });
+    const t = await r.text();
+    return { status: r.status, body: t ? JSON.parse(t) : {} };
+}
+
 const PROBLEM = {
     title: "확인용 과제",
     statement: "A+B",
@@ -255,6 +268,48 @@ async function main() {
 
         const list = await req(other, `/problems?collectionId=${collectionId}`);
         ok("남의 강의 문제 목록을 못 본다 (403)", list.status === 403, `${list.status}`);
+    }
+
+    console.log("\n== 그림 올리기 ==");
+    {
+        const png = Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+            "base64",
+        );
+
+        const anon = await post(null, new File([png], "a.png", { type: "image/png" }));
+        ok("비로그인은 못 올린다 (401)", anon.status === 401, `${anon.status}`);
+
+        const plainTry = await post(plain, new File([png], "a.png", { type: "image/png" }));
+        ok("일반 사용자는 못 올린다 (403)", plainTry.status === 403, `${plainTry.status}`);
+
+        const good = await post(teacher, new File([png], "a.png", { type: "image/png" }));
+        ok("강사는 올린다 (201)", good.status === 201, `${good.status}`);
+
+        // 브라우저가 보내는 Content-Type 은 확장자에서 추측한 값이라 믿을 수 없다.
+        // 내용이 png 가 아닌데 png 라고 하면 걸러야 한다
+        const fake = new File([Buffer.from("<script>alert(1)</script>")], "a.png", { type: "image/png" });
+        const bad = await post(teacher, fake);
+        ok("내용이 형식과 다르면 막는다 (415)", bad.status === 415, `${bad.status}`);
+
+        const svg = new File([Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>")], "a.svg", {
+            type: "image/svg+xml",
+        });
+        const svgTry = await post(teacher, svg);
+        ok("svg 는 안 받는다 (415)", svgTry.status === 415, `${svgTry.status}`);
+
+        const url = (good.body as { url?: string }).url ?? "";
+        const fetched = await fetch(`http://localhost:${process.env.PORT ?? 3000}${url}`);
+        ok("올린 그림을 로그인 없이 받는다 (200)", fetched.status === 200, `${fetched.status}`);
+        ok("content-type 이 png", fetched.headers.get("content-type") === "image/png");
+
+        // 이름 모양이 아니면 파일을 안 찾는다. 경로 조작이 여기서 끝난다
+        for (const bad of ["../../.env", "abc.png", `${url.split("/").pop()}.txt`]) {
+            const r = await fetch(
+                `http://localhost:${process.env.PORT ?? 3000}/api/uploads/${encodeURIComponent(bad)}`,
+            );
+            ok(`이상한 이름은 404 (${bad})`, r.status === 404, `${r.status}`);
+        }
     }
 
     console.log("\n== 수강생 관리 ==");

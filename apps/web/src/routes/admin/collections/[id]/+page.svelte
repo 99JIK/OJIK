@@ -2,6 +2,7 @@
     import { page } from "$app/state";
     import { get, put, patch, del } from "$lib/api";
     import { PRESET_LABEL, type CollectionPreset } from "@ojik/core";
+    import MarkdownInput from "$lib/MarkdownInput.svelte";
     import type { ProblemSummary } from "$lib/types";
 
     /**
@@ -293,12 +294,7 @@
                                 placeholder="소제목 (선택)"
                                 class="mb-2 w-full rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
                             />
-                            <textarea
-                                bind:value={item.body}
-                                rows="4"
-                                placeholder="설명 (마크다운)"
-                                class="w-full rounded border border-zinc-300 px-2 py-1 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
-                            ></textarea>
+                            <MarkdownInput bind:value={item.body} rows={6} allowUpload placeholder="설명" />
                         {/if}
                     </div>
 

@@ -3,6 +3,7 @@
     import { get, post, patch, put } from "$lib/api";
     import { CHECKER_LABEL, CHECKER_TYPES, PROBLEM_LIMITS, type CheckerType } from "@ojik/core";
     import { page } from "$app/state";
+    import MarkdownInput from "$lib/MarkdownInput.svelte";
     import { session } from "$lib/session.svelte";
 
     /**
@@ -242,29 +243,31 @@
             />
         </label>
 
-        {#each [["문제", "statement"], ["입력", "inputDesc"], ["출력", "outputDesc"], ["힌트", "hint"]] as [label, key] (key)}
-            <label class="block text-sm">
-                <span class="mb-1 block font-medium">{label}</span>
-                <textarea
-                    value={key === "statement"
-                        ? statement
-                        : key === "inputDesc"
-                          ? inputDesc
-                          : key === "outputDesc"
-                            ? outputDesc
-                            : hint}
-                    oninput={(e) => {
-                        const val = e.currentTarget.value;
-                        if (key === "statement") statement = val;
-                        else if (key === "inputDesc") inputDesc = val;
-                        else if (key === "outputDesc") outputDesc = val;
-                        else hint = val;
-                    }}
-                    rows={key === "statement" ? 8 : 3}
-                    class="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
-                ></textarea>
-            </label>
-        {/each}
+        <!--
+            본문 네 칸.
+
+            each 로 묶어 놓고 안에서 key 로 갈라 쓰면 bind: 를 못 건다. 네 칸을 그냥 펼친다.
+            반복이 조금 늘지만, 값을 어디에 넣는지가 눈에 보이는 쪽이 낫다.
+        -->
+        <label class="block text-sm">
+            <span class="mb-1 block font-medium">문제</span>
+            <MarkdownInput bind:value={statement} rows={12} allowUpload placeholder="문제 설명" />
+        </label>
+
+        <label class="block text-sm">
+            <span class="mb-1 block font-medium">입력</span>
+            <MarkdownInput bind:value={inputDesc} rows={4} allowUpload />
+        </label>
+
+        <label class="block text-sm">
+            <span class="mb-1 block font-medium">출력</span>
+            <MarkdownInput bind:value={outputDesc} rows={4} allowUpload />
+        </label>
+
+        <label class="block text-sm">
+            <span class="mb-1 block font-medium">힌트</span>
+            <MarkdownInput bind:value={hint} rows={4} allowUpload />
+        </label>
 
         <div class="grid gap-4 sm:grid-cols-2">
             <label class="block text-sm">
