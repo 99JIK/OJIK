@@ -11,6 +11,7 @@ import {
     JOIN_POLICIES,
     VISIBILITIES,
     MEMBER_ROLES,
+    canAssist,
     parseRoster,
     makeTempPassword,
     resultCsv,
@@ -120,6 +121,25 @@ async function requireManage(user: User, id: number): Promise<Collection> {
     const access = await collectionAccess(user, col);
     if (!access.canView) throw new HTTPException(404, { message: "찾을 수 없습니다" });
     if (!access.canManage) throw new HTTPException(403, { message: "이 컬렉션의 운영자가 아닙니다" });
+    return col;
+}
+
+/**
+ * 조교 이상이면 통과.
+ *
+ * 조교는 보는 일과 문제 고치는 일을 한다. 명단과 구성은 못 바꾼다. 조교에게 명단을 열어 주면
+ * 실수로 수강생을 지웠을 때 되돌릴 방법이 없다. 반대로 진도와 성적을 못 보게 하면
+ * 조교가 할 수 있는 일이 사실상 없다.
+ */
+async function requireAssist(user: User, id: number): Promise<Collection> {
+    const [col] = await db.select().from(collections).where(eq(collections.id, id));
+    if (!col) throw new HTTPException(404, { message: "찾을 수 없습니다" });
+
+    const access = await collectionAccess(user, col);
+    if (!access.canView) throw new HTTPException(404, { message: "찾을 수 없습니다" });
+    if (!access.canManage && !canAssist(access.member?.role)) {
+        throw new HTTPException(403, { message: "이 컬렉션의 조교 이상만 볼 수 있습니다" });
+    }
     return col;
 }
 
@@ -428,7 +448,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
      */
     .get("/:id{[0-9]+}/members", requireAuth, async (c) => {
         const id = Number(c.req.param("id"));
-        await requireManage(c.get("user")!, id);
+        await requireAssist(c.get("user")!, id);
 
         const rows = await db
             .select({
@@ -622,7 +642,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
      */
     .get("/:id{[0-9]+}/scores", requireAuth, async (c) => {
         const id = Number(c.req.param("id"));
-        await requireManage(c.get("user")!, id);
+        await requireAssist(c.get("user")!, id);
 
         const items = await db
             .select({

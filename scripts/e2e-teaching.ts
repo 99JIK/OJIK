@@ -437,6 +437,56 @@ async function main() {
         }
     }
 
+    console.log("\n== 조교 권한 ==");
+    {
+        /*
+         * 조교는 보는 일과 문제 고치는 일을 한다. 명단과 구성은 못 바꾼다.
+         * 역할 값만 늘리고 라우트에 안 붙이면 조교가 공동 운영자와 똑같아진다.
+         */
+        const ta = await signup(`e2e_a_${STAMP}`);
+        await req(teacher, `/collections/${collectionId}/members`, {
+            method: "PUT",
+            body: JSON.stringify({ handles: [ta.handle], role: "ta", replace: true }),
+        });
+
+        const roster = await req(ta, `/collections/${collectionId}/members`);
+        ok("조교는 명단을 본다 (200)", roster.status === 200, `${roster.status}`);
+
+        const scores = await req(ta, `/collections/${collectionId}/scores`);
+        ok("조교는 성적표를 본다 (200)", scores.status === 200, `${scores.status}`);
+
+        const list = await req(ta, `/problems?collectionId=${collectionId}`);
+        ok("조교는 강의 문제 목록을 본다 (200)", list.status === 200, `${list.status}`);
+
+        const edit = await req(ta, `/problems/${problemId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ title: "조교가 고침" }),
+        });
+        ok("조교는 문제를 고친다 (200)", edit.status === 200, `${edit.status} ${edit.body.error ?? ""}`);
+
+        const settings = await req(ta, `/collections/${collectionId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ title: "조교가 바꾸면 안 됨" }),
+        });
+        ok("조교는 강의 설정을 못 바꾼다 (403)", settings.status === 403, `${settings.status}`);
+
+        const roster2 = await req(ta, `/collections/${collectionId}/members`, {
+            method: "PUT",
+            body: JSON.stringify({ handles: [], replace: true }),
+        });
+        ok("조교는 명단을 못 바꾼다 (403)", roster2.status === 403, `${roster2.status}`);
+
+        const items = await req(ta, `/collections/${collectionId}/items`, {
+            method: "PUT",
+            body: JSON.stringify({ items: [] }),
+        });
+        ok("조교는 구성을 못 바꾼다 (403)", items.status === 403, `${items.status}`);
+
+        // 수강생은 아무것도 못 본다. 조교와 구분되는지
+        const byStudent = await req(student, `/collections/${collectionId}/scores`);
+        ok("수강생은 성적표를 못 본다 (403)", byStudent.status === 403, `${byStudent.status}`);
+    }
+
     await cleanup();
     console.log(`\n통과 ${pass}, 실패 ${fail}`);
     process.exit(fail === 0 ? 0 : 1);

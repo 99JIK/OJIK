@@ -1,5 +1,5 @@
 import { and, eq, asc } from "drizzle-orm";
-import { atLeast, isRunning, hasEnded, canRevealVerdict } from "@ojik/core";
+import { atLeast, isRunning, hasEnded, canRevealVerdict, canAssist } from "@ojik/core";
 import {
     collections,
     collectionItems,
@@ -111,7 +111,10 @@ export async function canEditProblem(user: User, problem: Problem): Promise<bool
 
     const [col] = await db.select().from(collections).where(eq(collections.id, problem.ownerCollectionId));
     if (!col) return false;
-    return (await collectionAccess(user, col)).canManage;
+
+    // 조교도 문제를 고친다. 과제를 손보는 건 조교가 실제로 하는 일이다
+    const a = await collectionAccess(user, col);
+    return a.canManage || canAssist(a.member?.role);
 }
 
 /**

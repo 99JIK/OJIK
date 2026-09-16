@@ -3,7 +3,7 @@ import { z } from "zod";
 import { v } from "../validate";
 import { and, asc, desc, eq, ilike, sql, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, atLeast, blankOut } from "@ojik/core";
+import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, atLeast, blankOut, canAssist } from "@ojik/core";
 import { problems, testcases, tags, problemTags, submissions, collections, users, enqueue } from "@ojik/db";
 import { db } from "../db";
 import { alias } from "drizzle-orm/pg-core";
@@ -154,8 +154,10 @@ export const problemRoutes = new Hono<AuthEnv>()
             if (!user) throw new HTTPException(401, { message: "로그인이 필요합니다" });
             const [col] = await db.select().from(collections).where(eq(collections.id, q.collectionId));
             if (!col) throw new HTTPException(404, { message: "찾을 수 없습니다" });
-            if (!(await collectionAccess(user, col)).canManage) {
-                throw new HTTPException(403, { message: "이 강의의 운영자가 아닙니다" });
+            // 조교도 본다. 과제를 고치려면 목록에서 찾을 수 있어야 한다
+            const a = await collectionAccess(user, col);
+            if (!a.canManage && !canAssist(a.member?.role)) {
+                throw new HTTPException(403, { message: "이 강의의 조교 이상만 볼 수 있습니다" });
             }
             conds.push(eq(problems.ownerCollectionId, q.collectionId));
         } else {
