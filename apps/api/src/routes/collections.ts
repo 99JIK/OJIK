@@ -13,6 +13,7 @@ import {
     MEMBER_ROLES,
     canAssist,
     parseRoster,
+    parseCourseMarkdown,
     makeTempPassword,
     resultCsv,
     ROSTER_MAX_ROWS,
@@ -660,6 +661,84 @@ export const collectionRoutes = new Hono<AuthEnv>()
                 errors,
                 /** 만든 계정만. 나눠 줄 파일 내용이고 다시 받을 수 없다 */
                 passwordCsv: created.length > 0 ? resultCsv(created) : null,
+            });
+        },
+    )
+
+    /**
+     * 교재를 마크다운 한 장으로 올린다.
+     *
+     * 항목을 화면에서 하나씩 만드는 건 주차 하나만 넘어가도 지친다. 설명을 쓰다가
+     * 문제를 끼우는 순서 그대로 적고, 그걸 그대로 올릴 수 있어야 한다.
+     *
+     * 기존 항목을 전부 갈아엎는다. 뒤에 붙이는 방식으로 두면 두 번 올렸을 때 내용이
+     * 두 배가 되는데, 그게 더 흔한 사고다. 화면에서 경고한다.
+     */
+    .post(
+        "/:id{[0-9]+}/import",
+        requireAuth,
+        v("json", z.object({ markdown: z.string().min(1).max(1_000_000) })),
+        async (c) => {
+            const id = Number(c.req.param("id"));
+            await requireManage(c.get("user")!, id);
+            const { markdown } = c.req.valid("json");
+
+            const parsed = parseCourseMarkdown(markdown);
+            const errors = [...parsed.errors];
+
+            /*
+             * 참조한 문제가 실제로 있는지, 그리고 이 강의에 담을 수 있는지 본다.
+             *
+             * 없는 번호를 그대로 넣으면 학생 화면에서 빈 줄이 되고, 왜 안 보이는지
+             * 아무도 모른다. 남의 강의 전용 문제를 번호로 끌어오는 것도 막아야 한다.
+             */
+            const wanted = parsed.items.filter((i) => i.kind === "problem").map((i) => i.problemId);
+            const found =
+                wanted.length > 0
+                    ? await db
+                          .select({ id: problems.id, owner: problems.ownerCollectionId, isPublic: problems.isPublic })
+                          .from(problems)
+                          .where(inArray(problems.id, wanted))
+                    : [];
+            const byId = new Map(found.map((p) => [p.id, p]));
+
+            const usable = new Set<number>();
+            for (const pid of wanted) {
+                const p = byId.get(pid);
+                if (!p) {
+                    errors.push(`문제 ${pid} 이(가) 없습니다`);
+                    continue;
+                }
+                if (p.owner !== null && p.owner !== id) {
+                    errors.push(`문제 ${pid} 은(는) 다른 강의 전용입니다`);
+                    continue;
+                }
+                usable.add(pid);
+            }
+
+            const items = parsed.items.filter((i) => i.kind !== "problem" || usable.has(i.problemId));
+
+            await db.transaction(async (tx) => {
+                await tx.delete(collectionItems).where(eq(collectionItems.collectionId, id));
+                if (items.length) {
+                    await tx.insert(collectionItems).values(
+                        items.map((it, idx) => ({
+                            collectionId: id,
+                            idx,
+                            kind: it.kind,
+                            problemId: it.kind === "problem" ? it.problemId : null,
+                            points: 100,
+                            body: it.kind === "text" ? it.body : null,
+                            heading: it.kind === "text" ? it.heading : null,
+                        })),
+                    );
+                }
+            });
+
+            return c.json({
+                items: items.length,
+                problems: items.filter((i) => i.kind === "problem").length,
+                errors,
             });
         },
     )

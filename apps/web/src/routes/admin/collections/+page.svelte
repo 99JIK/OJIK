@@ -137,7 +137,7 @@
 </script>
 
 <div class="flex items-center justify-between">
-    <h1 class="text-xl font-bold">교재, 문제집, 대회</h1>
+    <h1 class="ojik-title">교재, 문제집, 대회</h1>
     <button
         onclick={() => (creating = !creating)}
         class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
@@ -286,33 +286,63 @@
         {/if}
     </div>
 {:else}
-    <ul class="mt-4 divide-y divide-zinc-100 dark:divide-zinc-900">
+    <!--
+        줄 목록이 아니라 카드다.
+
+        전에는 종류, 제목, 상태, 개수가 전부 같은 크기 같은 회색으로 한 줄에 있어서
+        제목이 어디고 누르는 곳이 어딘지 구분이 안 됐다. 제목을 키우고, 누르는 곳은
+        버튼으로 못박고, 숫자는 라벨을 붙여 아래로 내린다.
+    -->
+    <ul class="mt-5 space-y-2">
         {#each rows as r (r.id)}
             {@const st = statusOf(r)}
-            <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-3">
-                <span class="w-16 shrink-0 text-xs text-zinc-400">{PRESET_LABEL[r.preset]}</span>
-                <a href="/admin/collections/{r.id}" class="font-medium hover:underline">{r.title}</a>
-                <span class="rounded px-1.5 py-0.5 text-xs {st.cls}">{st.text}</span>
-                {#if r.visibility !== "public"}
-                    <span class="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800">
-                        {VISIBILITY_LABEL[r.visibility]}
-                    </span>
-                {/if}
+            <li class="ojik-card p-4 transition hover:border-zinc-300 dark:hover:border-zinc-700">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="ojik-badge bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                                {PRESET_LABEL[r.preset]}
+                            </span>
+                            <span class="ojik-badge {st.cls}">{st.text}</span>
+                            {#if r.visibility !== "public"}
+                                <span class="ojik-badge bg-zinc-100 text-zinc-500 dark:bg-zinc-800">
+                                    {VISIBILITY_LABEL[r.visibility]}
+                                </span>
+                            {/if}
+                        </div>
 
-                <span class="ml-auto flex flex-wrap items-center gap-3 text-xs text-zinc-400">
+                        <a
+                            href="/admin/collections/{r.id}"
+                            class="mt-1.5 block text-base font-semibold hover:underline"
+                        >
+                            {r.title}
+                        </a>
+                        <p class="mt-0.5 font-mono text-xs text-zinc-400">/c/{r.slug}</p>
+                    </div>
+
+                    <!-- 누르는 곳을 버튼으로 못박는다. 전에는 "보기" 가 회색 글씨라 링크로 안 보였다 -->
+                    <div class="flex shrink-0 flex-wrap gap-1.5">
+                        <a href="/admin/collections/{r.id}" class="ojik-btn ojik-btn-ghost px-3 py-1.5">편집</a>
+                        <a href="/admin/collections/{r.id}/scores" class="ojik-btn ojik-btn-ghost px-3 py-1.5">
+                            성적표
+                        </a>
+                        <a href="/c/{r.slug}" class="ojik-btn ojik-btn-ghost px-3 py-1.5">학생 화면</a>
+                    </div>
+                </div>
+
+                <div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-zinc-500">
                     {#if r.problemCount === 0}
-                        <span class="text-amber-600 dark:text-amber-400">문제 없음</span>
+                        <span class="text-amber-600 dark:text-amber-400">문제가 없습니다</span>
                     {:else}
-                        <span>문제 {r.problemCount}</span>
+                        <span>문제 <strong class="font-semibold text-zinc-700 dark:text-zinc-300">{r.problemCount}</strong></span>
                     {/if}
-                    <span>인원 {r.memberCount}</span>
+                    <span>인원 <strong class="font-semibold text-zinc-700 dark:text-zinc-300">{r.memberCount}</strong></span>
                     {#if r.timing === "fixed" && r.startsAt && r.endsAt}
                         <span>{formatDate(r.startsAt)} ~ {formatDate(r.endsAt)}</span>
                     {:else if r.timing === "per_user"}
                         <span>각자 {r.durationMinutes}분</span>
                     {/if}
-                    <a href="/c/{r.slug}" class="hover:underline">보기</a>
-                </span>
+                </div>
             </li>
         {/each}
     </ul>

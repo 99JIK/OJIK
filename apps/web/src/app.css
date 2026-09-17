@@ -143,6 +143,24 @@ body {
     .ojik-table td:last-child {
         padding-inline-end: 0;
     }
+
+    /*
+     * 표 안에서 끊기면 안 되는 칸.
+     *
+     * "C17 (gcc 14)" 나 "2026-09-17 15:59" 이 두 줄이 되면 행 높이가 들쭉날쭉해지고
+     * 눈으로 훑기가 나빠진다. 넓이가 모자라면 줄을 바꾸는 대신 표 전체가 가로로 스크롤한다.
+     */
+    .ojik-table .nowrap {
+        white-space: nowrap;
+    }
+
+    /* 제목처럼 길 수 있는 칸. 넘치면 말줄임 */
+    .ojik-table .clip {
+        max-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
 }
 
 /**

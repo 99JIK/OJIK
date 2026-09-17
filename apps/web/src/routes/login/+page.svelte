@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Logo from "$lib/Logo.svelte";
     import { goto } from "$app/navigation";
     import { session } from "$lib/session.svelte";
 
@@ -30,9 +31,8 @@
 <!-- 첫 화면이라 가운데로 올린다. 카드 하나만 보이게 -->
 <div class="mx-auto mt-8 max-w-sm sm:mt-16">
     <div class="mb-6 text-center">
-        <div class="flex items-baseline justify-center gap-1.5">
-            <span class="text-2xl font-bold tracking-tight text-blue-600 dark:text-blue-400">OJIK</span>
-            <span class="text-zinc-400">오직</span>
+        <div class="flex justify-center">
+            <Logo size={32} />
         </div>
         <p class="mt-1 text-sm text-zinc-500">
             {mode === "login" ? "다시 오셨군요." : "계정을 만들면 문제를 풀 수 있습니다."}

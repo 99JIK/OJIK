@@ -3,7 +3,7 @@ import { z } from "zod";
 import { v } from "../validate";
 import { and, asc, desc, eq, ilike, sql, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, MAX_CHECKER_BYTES, atLeast, blankOut, canAssist } from "@ojik/core";
+import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, MAX_CHECKER_BYTES, atLeast, blankOut, canAssist, parseBulkProblems, BULK_MAX_PROBLEMS } from "@ojik/core";
 import { problems, testcases, tags, problemTags, submissions, collections, users, enqueue } from "@ojik/db";
 import { db } from "../db";
 import { alias } from "drizzle-orm/pg-core";
@@ -452,6 +452,118 @@ export const problemRoutes = new Hono<AuthEnv>()
         await removeProblemData(id);
         return c.json({ ok: true });
     })
+
+    /**
+     * 문제 여러 개를 한 번에 올린다.
+     *
+     * 화면에서 하나씩 등록하는 건 다섯 개만 넘어가도 못 할 짓이다. 출제자는 보통 자기
+     * 에디터에서 문제를 쓰고 테스트케이스를 스크립트로 만든다. 그걸 그대로 올릴 수 있어야 한다.
+     *
+     * 문제 하나씩 트랜잭션을 연다. 50개를 한 덩어리로 묶으면 하나가 어긋났을 때 전부
+     * 되돌아간다. 되는 것은 넣고 안 되는 것만 알려 준다. 명단 올리기와 같은 규칙이다.
+     */
+    .post(
+        "/import",
+        requireRole("instructor"),
+        v(
+            "json",
+            z.object({
+                json: z.string().min(1).max(4_000_000),
+                ownerCollectionId: z.number().int().positive().nullable().optional(),
+            }),
+        ),
+        async (c) => {
+            const user = c.get("user")!;
+            const { json, ownerCollectionId = null } = c.req.valid("json");
+
+            await assertCanCreate(user, ownerCollectionId);
+
+            const parsed = parseBulkProblems(json);
+            if (parsed.items.length > BULK_MAX_PROBLEMS) {
+                throw new HTTPException(413, {
+                    message: `한 번에 ${BULK_MAX_PROBLEMS}개까지 올릴 수 있습니다 (${parsed.items.length}개).`,
+                });
+            }
+
+            const created: Array<{ id: number; title: string; testcases: number }> = [];
+            const errors = [...parsed.errors];
+
+            for (const p of parsed.items) {
+                try {
+                    // 유형에 필요한 칸이 비면 여기서 걸린다. 학생이 제출할 때 터지는 것보다 낫다
+                    assertKindFields({
+                        kind: p.kind,
+                        blankTemplate: p.blankTemplate,
+                        blankLanguage: p.blankLanguage,
+                        checkerType: p.checkerType,
+                        checkerSource: p.checkerSource,
+                        checkerLanguage: p.checkerLanguage,
+                    });
+
+                    const row = await db.transaction(async (tx) => {
+                        const [inserted] = await tx
+                            .insert(problems)
+                            .values({
+                                title: p.title,
+                                statement: p.statement ?? "",
+                                inputDesc: p.inputDesc ?? "",
+                                outputDesc: p.outputDesc ?? "",
+                                hint: p.hint ?? null,
+                                timeLimitMs: p.timeLimitMs ?? PROBLEM_LIMITS.timeMs.default,
+                                memoryLimitMb: p.memoryLimitMb ?? PROBLEM_LIMITS.memoryMb.default,
+                                kind: p.kind ?? "code",
+                                checkerType: p.checkerType ?? "trim",
+                                floatEpsilon: p.floatEpsilon ?? 1e-6,
+                                stopOnFirstFail: p.stopOnFirstFail ?? true,
+                                isPublic: p.isPublic ?? false,
+                                difficulty: p.difficulty ?? null,
+                                blankTemplate: p.blankTemplate ?? null,
+                                blankLines: p.blankLines ?? null,
+                                blankLanguage: (p.blankLanguage as never) ?? null,
+                                checkerSource: p.checkerSource ?? null,
+                                checkerLanguage: (p.checkerLanguage as never) ?? null,
+                                ownerCollectionId,
+                                createdBy: user.id,
+                            })
+                            .returning();
+                        return inserted!;
+                    });
+
+                    /*
+                     * 테스트케이스는 파일로 나간다.
+                     *
+                     * 해시와 크기를 여기서 다시 계산하지 않는다. writeTestcaseFile 이 개행을
+                     * LF 로 바꾼 뒤의 값을 돌려주는데, 원문으로 계산하면 파일과 DB 가 어긋난다.
+                     * check-data 가 그걸 불일치로 잡는다.
+                     */
+                    const tcs = p.testcases ?? [];
+                    const rows = [];
+                    for (const [i, tc] of tcs.entries()) {
+                        const inf = await writeTestcaseFile(row.id, i, "in", tc.input);
+                        const outf = await writeTestcaseFile(row.id, i, "out", tc.output);
+                        rows.push({
+                            problemId: row.id,
+                            idx: i,
+                            isSample: tc.isSample ?? false,
+                            points: tc.points ?? 0,
+                            inputSha256: inf.sha256,
+                            inputBytes: inf.bytes,
+                            outputSha256: outf.sha256,
+                            outputBytes: outf.bytes,
+                        });
+                    }
+                    if (rows.length > 0) await db.insert(testcases).values(rows);
+
+                    created.push({ id: row.id, title: row.title, testcases: tcs.length });
+                } catch (e) {
+                    const why = e instanceof HTTPException ? e.message : e instanceof Error ? e.message : String(e);
+                    errors.push(`${p.title}: ${why}`);
+                }
+            }
+
+            return c.json({ created, errors });
+        },
+    )
 
     /**
      * 편집용 원본.

@@ -90,36 +90,39 @@
         <table class="ojik-table w-full min-w-[720px] text-sm">
             <thead class="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
                 <tr>
-                    <th class="w-20 font-medium">번호</th>
-                    <th class="w-28 font-medium">아이디</th>
+                    <th class="nowrap w-20 font-medium">번호</th>
+                    <th class="nowrap w-28 font-medium">아이디</th>
                     <th class="font-medium">문제</th>
-                    <th class="w-36 font-medium">결과</th>
-                    <th class="w-20 text-right font-medium">시간</th>
-                    <th class="w-24 text-right font-medium">메모리</th>
-                    <th class="w-20 font-medium">언어</th>
-                    <th class="w-32 font-medium">제출 시각</th>
+                    <th class="nowrap w-36 font-medium">결과</th>
+                    <th class="nowrap w-20 text-right font-medium">시간</th>
+                    <th class="nowrap w-24 text-right font-medium">메모리</th>
+                    <th class="nowrap w-32 font-medium">언어</th>
+                    <th class="nowrap w-36 font-medium">제출 시각</th>
                     {#if session.isStaff}<th class="w-20"></th>{/if}
                 </tr>
             </thead>
             <tbody>
                 {#each rows as r (r.id)}
                     <tr class="border-b border-zinc-100 dark:border-zinc-900">
-                        <td class="tabular-nums text-zinc-500">
+                        <td class="nowrap tabular-nums text-zinc-500">
                             <a href="/submission/{r.id}" class="hover:underline">{r.id}</a>
                         </td>
-                        <td>
+                        <td class="nowrap">
                             <a href="/submissions?handle={r.handle}" class="hover:underline">{r.handle}</a>
                         </td>
-                        <td>
-                            <a href="/problem/{r.problemId}" class="hover:underline">{r.problemTitle}</a>
+                        <!-- 제목만 길 수 있다. 넘치면 말줄임하고 나머지 칸은 안 밀리게 -->
+                        <td class="clip">
+                            <a href="/problem/{r.problemId}" class="hover:underline" title={r.problemTitle}>
+                                {r.problemTitle}
+                            </a>
                         </td>
-                        <td class="{verdictClass(r.verdict, r.status)}">
+                        <td class="nowrap {verdictClass(r.verdict, r.status)}">
                             {verdictText(r.verdict, r.status, r.judgedCount, r.totalCount)}
                         </td>
-                        <td class="text-right tabular-nums text-zinc-500">{formatTime(r.maxTimeMs)}</td>
-                        <td class="text-right tabular-nums text-zinc-500">{formatMemory(r.maxMemoryKb)}</td>
-                        <td class="text-zinc-500">{meta.label(r.language)}</td>
-                        <td class="text-zinc-500">{formatDate(r.createdAt)}</td>
+                        <td class="nowrap text-right tabular-nums text-zinc-500">{formatTime(r.maxTimeMs)}</td>
+                        <td class="nowrap text-right tabular-nums text-zinc-500">{formatMemory(r.maxMemoryKb)}</td>
+                        <td class="nowrap text-zinc-500">{r.language ? meta.label(r.language) : "-"}</td>
+                        <td class="nowrap text-zinc-500">{formatDate(r.createdAt)}</td>
                         {#if session.isStaff}
                             <td>
                                 <button onclick={() => rejudge(r.id)} class="text-xs text-blue-600 hover:underline dark:text-blue-400">

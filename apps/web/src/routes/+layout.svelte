@@ -4,6 +4,7 @@
     import { page } from "$app/state";
     import { goto } from "$app/navigation";
     import { session } from "$lib/session.svelte";
+    import Logo from "$lib/Logo.svelte";
 
     let { children } = $props();
     let dark = $state(false);
@@ -57,9 +58,8 @@
         class="sticky top-0 z-30 border-b border-zinc-200 bg-white/85 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/85"
     >
         <div class="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-5">
-            <a href="/" class="flex shrink-0 items-baseline gap-1.5">
-                <span class="text-lg font-bold tracking-tight text-blue-600 dark:text-blue-400">OJIK</span>
-                <span class="hidden text-sm text-zinc-400 sm:inline">오직</span>
+            <a href="/" class="shrink-0" aria-label="OJIK 홈">
+                <Logo showSub={false} />
             </a>
 
             <nav class="-mx-1 flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1 text-sm">

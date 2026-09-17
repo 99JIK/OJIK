@@ -121,11 +121,12 @@
         {/if}
     </div>
 
-    <dl class="mt-5 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-zinc-200 bg-zinc-200 text-sm dark:border-zinc-800 dark:bg-zinc-800">
+    <!-- 셋뿐이라 화면 폭을 다 쓰면 칸마다 빈 곳이 넓다. 왼쪽으로 몰고 폭을 제한한다 -->
+    <dl class="mt-5 grid max-w-xl grid-cols-3 gap-3">
         {#each [["맞힌 문제", `${u.solvedCount}`], ["제출", `${u.submissionCount}`], ["정답률", accuracy === null ? "-" : `${accuracy}%`]] as [k, v] (k)}
-            <div class="bg-white px-3 py-2 dark:bg-zinc-950">
+            <div class="ojik-card px-4 py-3">
                 <dt class="text-xs text-zinc-500">{k}</dt>
-                <dd class="mt-0.5 text-lg font-semibold tabular-nums">{v}</dd>
+                <dd class="mt-1 text-xl font-bold tabular-nums">{v}</dd>
             </div>
         {/each}
     </dl>
@@ -178,76 +179,108 @@
         </p>
     {/if}
 
-    {#if data.activity.length > 0}
-        <section class="mt-8">
-            <h2 class="mb-2 text-sm font-semibold">최근 12주</h2>
-            <div class="overflow-x-auto">
-                <div class="grid w-max grid-flow-col grid-rows-7 gap-0.5">
-                    {#each days as d (d.day)}
-                        <div
-                            class="h-2.5 w-2.5 rounded-sm {d.n === 0
-                                ? 'bg-zinc-100 dark:bg-zinc-900'
-                                : 'bg-green-500'}"
-                            style={d.n === 0 ? "" : `opacity: ${0.3 + 0.7 * (d.n / maxDay)}`}
-                            title="{d.day} 제출 {d.n}건"
-                        ></div>
-                    {/each}
+    <!--
+        활동 요약.
+
+        격자, 언어, 판정을 한 카드에 둔다. 셋 다 "이 사람이 어떻게 풀어 왔나" 하나를
+        말하는 것이라, 카드를 셋으로 나누면 화면만 길어지고 같은 것을 세 번 보게 된다.
+
+        막대는 항목이 둘 이상일 때만 그린다. 하나뿐이면 언제나 꽉 찬 막대가 나오는데
+        그건 비교가 아니라 장식이다. 제출 한 건짜리 프로필에서 회색 막대가 화면을
+        가로지르고 있었다.
+    -->
+    {#if data.activity.length > 0 || data.byLanguage.length > 0 || data.byVerdict.length > 0}
+        <section class="ojik-card mt-6 p-4">
+            {#if data.activity.length > 0}
+                <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 class="text-sm font-semibold">최근 12주</h2>
+                    <span class="flex items-center gap-1.5 text-xs text-zinc-400">
+                        적음
+                        <span class="inline-block h-2.5 w-2.5 rounded-[3px] bg-zinc-100 dark:bg-zinc-800"></span>
+                        <span class="inline-block h-2.5 w-2.5 rounded-[3px] bg-green-500 opacity-40"></span>
+                        <span class="inline-block h-2.5 w-2.5 rounded-[3px] bg-green-500 opacity-70"></span>
+                        <span class="inline-block h-2.5 w-2.5 rounded-[3px] bg-green-500"></span>
+                        많음
+                    </span>
                 </div>
-            </div>
+
+                <div class="overflow-x-auto">
+                    <div class="grid w-max grid-flow-col grid-rows-7 gap-[3px]">
+                        {#each days as d (d.day)}
+                            <div
+                                class="h-3 w-3 rounded-[3px] {d.n === 0
+                                    ? 'bg-zinc-100 dark:bg-zinc-800'
+                                    : 'bg-green-500'}"
+                                style={d.n === 0 ? "" : `opacity: ${0.35 + 0.65 * (d.n / maxDay)}`}
+                                title="{d.day} 제출 {d.n}건"
+                            ></div>
+                        {/each}
+                    </div>
+                </div>
+            {/if}
+
+            {#if data.byLanguage.length > 0 || data.byVerdict.length > 0}
+                <div
+                    class="grid gap-x-8 gap-y-5 sm:grid-cols-2 {data.activity.length > 0
+                        ? 'mt-5 border-t border-zinc-100 pt-5 dark:border-zinc-800'
+                        : ''}"
+                >
+                    {#if data.byLanguage.length > 0}
+                        {@const topLang = data.byLanguage[0]!.n}
+                        <div>
+                            <h3 class="mb-2 text-xs font-semibold text-zinc-500">언어</h3>
+                            <ul class="space-y-2 text-sm">
+                                {#each data.byLanguage as l (l.language)}
+                                    <li class="flex items-baseline gap-2">
+                                        <span class="min-w-0 flex-1 truncate">{langLabel(l.language)}</span>
+                                        {#if data.byLanguage.length > 1}
+                                            <div class="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                                                <div
+                                                    class="h-full rounded-full bg-blue-500"
+                                                    style="width: {Math.round((l.n / topLang) * 100)}%"
+                                                ></div>
+                                            </div>
+                                        {/if}
+                                        <span class="shrink-0 text-xs tabular-nums text-zinc-500">
+                                            {l.accepted}/{l.n}
+                                        </span>
+                                    </li>
+                                {/each}
+                            </ul>
+                            <p class="mt-2 text-xs text-zinc-400">맞힌 제출 / 전체 제출</p>
+                        </div>
+                    {/if}
+
+                    {#if data.byVerdict.length > 0}
+                        <div>
+                            <h3 class="mb-2 text-xs font-semibold text-zinc-500">판정</h3>
+                            <ul class="space-y-2 text-sm">
+                                {#each data.byVerdict as v (v.verdict)}
+                                    <li class="flex items-baseline gap-2">
+                                        <span class="min-w-0 flex-1 truncate {verdictClass(v.verdict, 'done')}">
+                                            {VERDICT_LABEL[v.verdict]}
+                                        </span>
+                                        {#if data.byVerdict.length > 1}
+                                            <div class="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                                                <div
+                                                    class="h-full rounded-full bg-zinc-400"
+                                                    style="width: {Math.round((v.n / data.byVerdict[0].n) * 100)}%"
+                                                ></div>
+                                            </div>
+                                        {/if}
+                                        <span class="shrink-0 text-xs tabular-nums text-zinc-500">{v.n}</span>
+                                    </li>
+                                {/each}
+                            </ul>
+                        </div>
+                    {/if}
+                </div>
+            {/if}
         </section>
     {/if}
 
-    <div class="mt-8 grid gap-8 sm:grid-cols-2">
-        {#if data.byLanguage.length > 0}
-            <section>
-                <h2 class="mb-2 text-sm font-semibold">언어</h2>
-                <ul class="space-y-1 text-sm">
-                    {#each data.byLanguage as l (l.language)}
-                        <li class="flex items-baseline gap-2">
-                            <span class="w-32 shrink-0 truncate">{langLabel(l.language)}</span>
-                            <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
-                                <div
-                                    class="h-full rounded-full bg-blue-500"
-                                    style="width: {Math.round((l.n / data.byLanguage[0].n) * 100)}%"
-                                ></div>
-                            </div>
-                            <span class="w-20 shrink-0 text-right text-xs tabular-nums text-zinc-500">
-                                {l.accepted}/{l.n}
-                            </span>
-                        </li>
-                    {/each}
-                </ul>
-                <p class="mt-2 text-xs text-zinc-400">맞힌 제출 / 전체 제출</p>
-            </section>
-        {/if}
-
-        {#if data.byVerdict.length > 0}
-            <section>
-                <h2 class="mb-2 text-sm font-semibold">판정</h2>
-                <ul class="space-y-1 text-sm">
-                    {#each data.byVerdict as v (v.verdict)}
-                        <li class="flex items-baseline gap-2">
-                            <span class="w-32 shrink-0 truncate {verdictClass(v.verdict, 'done')}">
-                                {VERDICT_LABEL[v.verdict]}
-                            </span>
-                            <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
-                                <div
-                                    class="h-full rounded-full bg-zinc-400"
-                                    style="width: {Math.round((v.n / data.byVerdict[0].n) * 100)}%"
-                                ></div>
-                            </div>
-                            <span class="w-10 shrink-0 text-right text-xs tabular-nums text-zinc-500">
-                                {v.n}
-                            </span>
-                        </li>
-                    {/each}
-                </ul>
-            </section>
-        {/if}
-    </div>
-
-    <section class="mt-8">
-        <h2 class="mb-2 text-sm font-semibold">맞힌 문제 {data.solved.length}</h2>
+    <section class="ojik-card mt-4 p-4">
+        <h2 class="mb-3 text-sm font-semibold">맞힌 문제 {data.solved.length}</h2>
         {#if data.solved.length === 0}
             <p class="text-sm text-zinc-400">없습니다</p>
         {:else}
@@ -263,27 +296,39 @@
         {/if}
     </section>
 
-    <section class="mt-8">
-        <h2 class="mb-2 text-sm font-semibold">최근 제출</h2>
-        <table class="ojik-table w-full text-sm">
-            <tbody>
-                {#each recent as r (r.id)}
-                    <tr class="border-b border-zinc-100 dark:border-zinc-900">
-                        <td class="w-20 tabular-nums text-zinc-500">
-                            <a href="/submission/{r.id}" class="hover:underline">{r.id}</a>
-                        </td>
-                        <td>
-                            <a href="/problem/{r.problemId}" class="hover:underline">{r.problemTitle}</a>
-                        </td>
-                        <td class="w-36 {verdictClass(r.verdict, r.status)}">
-                            {verdictText(r.verdict, r.status, r.judgedCount, r.totalCount)}
-                        </td>
-                        <td class="w-32 text-zinc-500">{formatDate(r.createdAt)}</td>
-                    </tr>
-                {:else}
-                    <tr><td colspan="4" class="py-8 text-center text-zinc-400">제출이 없습니다</td></tr>
-                {/each}
-            </tbody>
-        </table>
+    <section class="ojik-card mt-4 p-4">
+        <div class="mb-1 flex items-baseline justify-between">
+            <h2 class="text-sm font-semibold">최근 제출</h2>
+            <a
+                href="/submissions?handle={u.handle}"
+                class="text-xs text-blue-600 hover:underline dark:text-blue-400"
+            >
+                전체 보기
+            </a>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="ojik-table w-full text-sm">
+                <tbody>
+                    {#each recent as r (r.id)}
+                        <tr class="border-b border-zinc-100 last:border-0 dark:border-zinc-900">
+                            <td class="nowrap w-16 tabular-nums text-zinc-500">
+                                <a href="/submission/{r.id}" class="hover:underline">{r.id}</a>
+                            </td>
+                            <td class="clip">
+                                <a href="/problem/{r.problemId}" class="hover:underline" title={r.problemTitle}>
+                                    {r.problemTitle}
+                                </a>
+                            </td>
+                            <td class="nowrap w-32 {verdictClass(r.verdict, r.status)}">
+                                {verdictText(r.verdict, r.status, r.judgedCount, r.totalCount)}
+                            </td>
+                            <td class="nowrap w-36 text-right text-zinc-500">{formatDate(r.createdAt)}</td>
+                        </tr>
+                    {:else}
+                        <tr><td colspan="4" class="py-8 text-center text-zinc-400">제출이 없습니다</td></tr>
+                    {/each}
+                </tbody>
+            </table>
+        </div>
     </section>
 {/if}
