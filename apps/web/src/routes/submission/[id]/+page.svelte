@@ -117,6 +117,17 @@
             <span class="text-zinc-500">{PROBLEM_KIND_LABEL[data.problemKind]}</span>
         {/if}
         <span class="text-zinc-500">{formatDate(s.createdAt)}</span>
+
+        <!--
+            부분점수.
+
+            맞았는지만 보여 주면 70점을 받았는지 0점을 받았는지 알 수가 없다. 채점기는
+            전부터 케이스별 배점으로 점수를 냈는데 화면에 나오는 곳이 없었다.
+            전부 맞힌 제출에는 안 띄운다. 만점인 게 당연해서 자리만 차지한다
+        -->
+        {#if !data.verdictHidden && s.verdict !== "accepted" && s.score > 0}
+            <span class="font-medium text-amber-600 dark:text-amber-400">{s.score}점</span>
+        {/if}
     </div>
 
     {#if data.verdictHidden}
@@ -169,13 +180,25 @@
     {/if}
 
     {#if data.results.length > 0}
+        <!-- {@const} 는 블록의 바로 아래 자식이어야 한다. section 안에는 못 둔다 -->
+        {@const earned = data.results.reduce((a, r) => a + (r.verdict === "accepted" ? r.points : 0), 0)}
+        {@const offered = data.results.reduce((a, r) => a + r.points, 0)}
         <section class="mt-6">
-            <h2 class="mb-2 text-sm font-semibold">테스트케이스</h2>
+            <div class="mb-2 flex items-baseline justify-between gap-3">
+                <h2 class="text-sm font-semibold">테스트케이스</h2>
+                <!-- 배점이 붙은 문제에서만. 전부 0 이면 통과 개수 비율로 환산되므로 뜻이 없다 -->
+                {#if offered > 0}
+                    <span class="text-xs text-zinc-400">배점 {earned} / {offered}</span>
+                {/if}
+            </div>
+
             <div class="flex flex-wrap gap-1">
                 {#each data.results as r (r.idx)}
                     {@const ok = r.verdict === "accepted"}
                     <span
-                        title="{r.idx + 1}번: {VERDICT_LABEL[r.verdict]} / {r.timeMs}ms / {formatMemory(r.memoryKb)}"
+                        title="{r.idx + 1}번: {VERDICT_LABEL[r.verdict]} / {r.timeMs}ms / {formatMemory(
+                            r.memoryKb,
+                        )}{r.points > 0 ? ` / ${r.points}점` : ''}"
                         class="rounded px-2 py-1 text-xs tabular-nums {ok
                             ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
                             : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'}">{r.idx + 1}</span

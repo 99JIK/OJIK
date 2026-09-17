@@ -296,6 +296,68 @@ async function main() {
         ok("원본 없이 빈칸 문제를 못 만든다 (400)", noTemplate.status === 400, `${noTemplate.status}`);
     }
 
+    console.log("\n== 부분점수와 마감 ==");
+    {
+        // 케이스에 배점을 달면 다 못 맞혀도 점수가 나와야 한다
+        const made = await req<{ problem: { id: number } }>(admin, "/problems", {
+            method: "POST",
+            body: JSON.stringify({
+                ...BASE_PROBLEM,
+                title: "부분점수 확인",
+                kind: "answer",
+                checkerType: "trim",
+                stopOnFirstFail: false,
+                ownerCollectionId: collectionId,
+            }),
+        });
+        const pid = made.body.problem.id;
+        await req(admin, `/problems/${pid}/testcases`, {
+            method: "PUT",
+            body: JSON.stringify({
+                testcases: [
+                    { input: "1 더하기 1 은?", output: "2", isSample: false, points: 30 },
+                    { input: "2 더하기 2 는?", output: "4", isSample: false, points: 70 },
+                ],
+            }),
+        });
+
+        const view = await req<{ partialScoring: boolean; totalPoints: number }>(student, `/problems/${pid}`);
+        ok("부분점수 문제로 표시된다", view.body.partialScoring === true, `${view.body.partialScoring}`);
+        ok("총점이 배점 합계다", view.body.totalPoints === 100, `${view.body.totalPoints}`);
+
+        const half = await req<{ submission: { id: number } }>(student, "/submissions", {
+            method: "POST",
+            body: JSON.stringify({ problemId: pid, answers: { 0: "틀림", 1: "4" } }),
+        });
+        const det = await req<{ submission: { score: number } }>(student, `/submissions/${half.body.submission.id}`);
+        ok("맞힌 케이스 배점만 받는다", det.body.submission.score === 70, `${det.body.submission.score}`);
+
+        // 항목 마감을 넣고 되읽어 본다
+        const due = new Date(Date.now() + 86400000).toISOString();
+        const put = await req(admin, `/collections/${collectionId}/items`, {
+            method: "PUT",
+            body: JSON.stringify({ items: [{ kind: "problem", problemId: pid, points: 100, dueAt: due }] }),
+        });
+        ok("항목 마감을 저장한다 (200)", put.status === 200, `${put.status} ${put.body.error ?? ""}`);
+
+        const detail = await req<{
+            items: Array<{ dueAt: string | null }>;
+            mine: Array<{ problemId: number; solved: boolean; best: number; firstSolvedAt: string | null }>;
+        }>(student, `/collections/kind-${STAMP}`);
+        ok(
+            "마감이 되읽힌다",
+            detail.body.items?.[0]?.dueAt != null &&
+                Math.abs(new Date(detail.body.items[0].dueAt).getTime() - new Date(due).getTime()) < 1000,
+            `${detail.body.items?.[0]?.dueAt}`,
+        );
+
+        // 학생이 자기 진도를 본다
+        const m = (detail.body.mine ?? []).find((x) => x.problemId === pid);
+        ok("내 진도가 내려온다", !!m, "mine 이 비어 있음");
+        ok("부분점수가 진도에 실린다", m?.best === 70, `${m?.best}`);
+        ok("못 맞힌 것은 solved 가 아니다", m?.solved === false, `${m?.solved}`);
+    }
+
     await cleanup();
     console.log(`\n통과 ${pass}, 실패 ${fail}`);
     process.exit(fail === 0 ? 0 : 1);

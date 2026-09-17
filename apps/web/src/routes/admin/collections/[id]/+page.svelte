@@ -15,6 +15,8 @@
         kind: "problem" | "text";
         problemId?: number;
         points: number;
+        /** 항목별 마감. ISO 문자열이거나 null */
+        dueAt?: string | null;
         body?: string;
         heading?: string;
         /** 표시용. 서버로 안 보낸다 */
@@ -68,6 +70,7 @@
                         problemId: number | null;
                         problemTitle: string | null;
                         points: number;
+                        dueAt: string | null;
                         body: string | null;
                         heading: string | null;
                     }[];
@@ -81,6 +84,7 @@
                     problemId: i.problemId ?? undefined,
                     problemTitle: i.problemTitle ?? undefined,
                     points: i.points,
+                    dueAt: i.dueAt ?? null,
                     body: i.body ?? undefined,
                     heading: i.heading ?? undefined,
                 }));
@@ -122,10 +126,28 @@
     });
 
     function addProblem(p: ProblemSummary) {
-        items = [...items, { kind: "problem", problemId: p.id, problemTitle: p.title, points: 100 }];
+        items = [...items, { kind: "problem", problemId: p.id, problemTitle: p.title, points: 100, dueAt: null }];
+    }
+
+    /**
+     * datetime-local 은 시간대 없는 지역 시각 문자열을 쓴다.
+     * DB 는 timestamptz 라 ISO 로 오간다. 그 사이를 변환한다.
+     *
+     * new Date(iso).toISOString().slice(0,16) 으로 하면 UTC 로 보여서 9시간이 어긋난다.
+     * 지역 시각 성분을 직접 조립해야 한다.
+     */
+    function toLocalInput(iso: string | null | undefined): string {
+        if (!iso) return "";
+        const d = new Date(iso);
+        const p2 = (n: number) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    }
+
+    function fromLocalInput(v: string): string | null {
+        return v ? new Date(v).toISOString() : null;
     }
     function addText() {
-        items = [...items, { kind: "text", points: 0, body: "", heading: "" }];
+        items = [...items, { kind: "text", points: 0, dueAt: null, body: "", heading: "" }];
     }
     function remove(i: number) {
         items = items.filter((_, j) => j !== i);
@@ -148,6 +170,7 @@
                     kind: i.kind,
                     problemId: i.problemId,
                     points: i.points,
+                    dueAt: i.dueAt ?? null,
                     body: i.body,
                     heading: i.heading,
                 })),
@@ -280,7 +303,7 @@
 
                     <div class="min-w-0 flex-1">
                         {#if item.kind === "problem"}
-                            <div class="flex items-center gap-3 text-sm">
+                            <div class="flex flex-wrap items-center gap-3 text-sm">
                                 <span class="font-medium">{item.problemTitle ?? `문제 ${item.problemId}`}</span>
                                 <label class="ml-auto flex items-center gap-1.5 text-xs text-zinc-500">
                                     배점
@@ -290,6 +313,29 @@
                                         min="0"
                                         class="w-20 rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
                                     />
+                                </label>
+                                <!--
+                                    항목별 마감. 컬렉션 전체 시간 창과 다른 것이다.
+                                    교재에서 주차마다 마감이 다른 경우에 쓴다.
+                                    넘겨도 제출은 막지 않고 지각으로 표시만 한다
+                                -->
+                                <label class="flex items-center gap-1.5 text-xs text-zinc-500">
+                                    마감
+                                    <input
+                                        type="datetime-local"
+                                        value={toLocalInput(item.dueAt)}
+                                        oninput={(e) => (item.dueAt = fromLocalInput(e.currentTarget.value))}
+                                        class="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
+                                    />
+                                    {#if item.dueAt}
+                                        <button
+                                            type="button"
+                                            onclick={() => (item.dueAt = null)}
+                                            class="text-zinc-400 underline hover:text-zinc-600"
+                                        >
+                                            지우기
+                                        </button>
+                                    {/if}
                                 </label>
                             </div>
                         {:else}

@@ -326,7 +326,18 @@ export const problemRoutes = new Hono<AuthEnv>()
             .where(eq(problemTags.problemId, id));
 
         const [count] = await db
-            .select({ n: sql<number>`count(*)::int` })
+            .select({
+                n: sql<number>`count(*)::int`,
+                /*
+                 * 부분점수 문제인지.
+                 *
+                 * 케이스에 배점이 붙어 있으면 부분점수다. 따로 플래그를 두지 않는 건,
+                 * 플래그와 실제 배점이 어긋나는 상태를 만들지 않기 위해서다.
+                 * 배점이 전부 0 이면 워커가 통과 개수 비율로 환산한다
+                 */
+                partial: sql<boolean>`bool_or(${testcases.points} > 0)`,
+                totalPoints: sql<number>`coalesce(sum(${testcases.points}), 0)::int`,
+            })
             .from(testcases)
             .where(eq(testcases.problemId, id));
 
@@ -338,6 +349,8 @@ export const problemRoutes = new Hono<AuthEnv>()
             blank,
             tags: tagRows,
             testcaseCount: count?.n ?? 0,
+            partialScoring: count?.partial ?? false,
+            totalPoints: count?.totalPoints ?? 0,
             canSubmit: access.canSubmit,
         });
     })

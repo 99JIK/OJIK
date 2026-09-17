@@ -35,6 +35,9 @@
         /** kind=blank 일 때 비운 줄을 지운 골격. 원본은 안 온다 */
         blank: { lines: string[]; blankLines: number[]; language: string | null } | null;
         testcaseCount: number;
+        /** 케이스에 배점이 붙어 있는지. 붙어 있으면 다 못 맞혀도 점수가 나온다 */
+        partialScoring: boolean;
+        totalPoints: number;
         canSubmit: boolean;
     } | null>(null);
     let languages = $state<LanguageOption[]>([]);
@@ -162,6 +165,17 @@
             </a>
         </div>
     </div>
+
+    <!--
+        부분점수 문제임을 알린다.
+        모르면 "다 못 맞혔는데 왜 점수가 있지" 가 된다. 반대로 만점만 정답으로 아는
+        사람은 부분점수를 노리는 풀이를 아예 안 짠다
+    -->
+    {#if detail.partialScoring}
+        <p class="mt-3 rounded-md bg-blue-50 px-4 py-2 text-sm text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
+            부분점수 문제입니다. 맞힌 테스트케이스의 배점만큼 점수를 받습니다 (총 {detail.totalPoints}점).
+        </p>
+    {/if}
 
     <dl class="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-zinc-200 bg-zinc-200 text-sm sm:grid-cols-4 dark:border-zinc-800 dark:bg-zinc-800">
         {#each [["시간 제한", `${p.timeLimitMs} ms`], ["메모리 제한", `${p.memoryLimitMb} MB`], ["테스트케이스", `${detail.testcaseCount}개`], ["맞힌 사람", `${p.acceptedCount}명`]] as [k, v] (k)}

@@ -81,6 +81,8 @@ const ItemsBody = z.object({
                 kind: z.enum(ITEM_KINDS).default("problem"),
                 problemId: z.number().int().positive().optional(),
                 points: z.number().int().min(0).default(100),
+                /** 항목별 마감. ISO 문자열. 없으면 마감 없음 */
+                dueAt: z.string().datetime().nullable().optional(),
                 body: z.string().optional(),
                 heading: z.string().max(200).optional(),
             }),
@@ -271,10 +273,12 @@ export const collectionRoutes = new Hono<AuthEnv>()
                       idx: collectionItems.idx,
                       kind: collectionItems.kind,
                       points: collectionItems.points,
+                      dueAt: collectionItems.dueAt,
                       body: collectionItems.body,
                       heading: collectionItems.heading,
                       problemId: problems.id,
                       problemTitle: problems.title,
+                      problemKind: problems.kind,
                       timeLimitMs: problems.timeLimitMs,
                       memoryLimitMb: problems.memoryLimitMb,
                   })
@@ -289,21 +293,49 @@ export const collectionRoutes = new Hono<AuthEnv>()
             .from(collectionItems)
             .where(eq(collectionItems.collectionId, col.id));
 
-        // 내가 푼 문제. 상시 컬렉션의 진도 표시용
+        /*
+         * 내 진도.
+         *
+         * 맞힌 것, 냈지만 못 맞힌 것, 그리고 처음 맞힌 시각을 함께 준다. 시각이 필요한 건
+         * 항목별 마감과 견줘 "늦게 냈는지" 를 화면이 판단해야 해서다. 맞힘 여부만 주면
+         * 마감을 넘겨 푼 것과 제때 푼 것이 똑같이 보인다.
+         *
+         * 점수도 같이 준다. 부분점수 문제에서 "풀었다/못 풀었다" 만으로는 70점을 받았는지
+         * 0점을 받았는지 알 수가 없다.
+         */
         let solved: number[] = [];
+        let mine: Array<{
+            problemId: number;
+            solved: boolean;
+            best: number;
+            tries: number;
+            firstSolvedAt: string | null;
+        }> = [];
+
         const problemIds = items.filter((i) => i.problemId).map((i) => i.problemId!);
         if (user && problemIds.length > 0) {
             const got = await db
-                .selectDistinct({ problemId: submissions.problemId })
+                .select({
+                    problemId: submissions.problemId,
+                    solved: sql<boolean>`bool_or(${submissions.verdict} = 'accepted')`,
+                    best: sql<number>`max(${submissions.score})::int`,
+                    tries: sql<number>`count(*)::int`,
+                    firstSolvedAt: sql<string | null>`
+                        min(${submissions.createdAt}) FILTER (WHERE ${submissions.verdict} = 'accepted')
+                    `,
+                })
                 .from(submissions)
                 .where(
                     and(
                         eq(submissions.userId, user.id),
-                        eq(submissions.verdict, "accepted"),
                         inArray(submissions.problemId, problemIds),
+                        eq(submissions.status, "done"),
                     ),
-                );
-            solved = got.map((g) => g.problemId);
+                )
+                .groupBy(submissions.problemId);
+
+            mine = got;
+            solved = got.filter((g) => g.solved).map((g) => g.problemId);
         }
 
         return c.json({
@@ -316,6 +348,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
             running: isRunning(col, member),
             ended: hasEnded(col, member),
             solved,
+            mine,
         });
     })
 
@@ -377,6 +410,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
                         kind: it.kind,
                         problemId: it.kind === "problem" ? it.problemId! : null,
                         points: it.points,
+                        dueAt: it.dueAt ? new Date(it.dueAt) : null,
                         body: it.kind === "text" ? (it.body ?? null) : null,
                         heading: it.heading ?? null,
                     })),
@@ -648,6 +682,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
             .select({
                 problemId: collectionItems.problemId,
                 idx: collectionItems.idx,
+                dueAt: collectionItems.dueAt,
                 title: problems.title,
                 kind: problems.kind,
             })
@@ -686,6 +721,10 @@ export const collectionRoutes = new Hono<AuthEnv>()
                           best: sql<number>`max(${submissions.score})::int`,
                           tries: sql<number>`count(*)::int`,
                           solved: sql<boolean>`bool_or(${submissions.verdict} = 'accepted')`,
+                          /** 처음 맞힌 시각. 항목 마감과 견줘 지각인지 본다 */
+                          firstSolvedAt: sql<string | null>`
+                              min(${submissions.createdAt}) FILTER (WHERE ${submissions.verdict} = 'accepted')
+                          `,
                       })
                       .from(submissions)
                       .where(

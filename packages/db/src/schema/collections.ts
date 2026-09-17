@@ -102,6 +102,18 @@ export const collectionItems = pgTable(
         /** scoring=ioi 일 때의 만점. 다른 채점 방식이면 무시된다 */
         points: integer().notNull().default(100),
 
+        /**
+         * 항목별 마감. 없으면 마감 없음.
+         *
+         * 컬렉션의 시간 창(timing, endsAt)과 다른 것이다. 그건 대회처럼 전체가 한 번에
+         * 열리고 닫히는 것이고, 이건 교재에서 주차마다 과제 마감이 다른 경우다. 한 교재에
+         * 1주차는 3월 10일, 2주차는 3월 17일 마감을 두려면 항목마다 있어야 한다.
+         *
+         * 넘겨도 제출은 막지 않는다. 늦게 낸 것으로 표시만 한다. 수업에서는 늦어도 받고
+         * 감점하는 쪽이 보통이고, 막아 버리면 강사가 예외를 만들 방법이 없다.
+         */
+        dueAt: timestamp({ withTimezone: true }),
+
         /** kind=text 일 때. 마크다운 */
         body: text(),
         /** kind=text 일 때 목차에 쓸 제목. 없으면 목차에 안 나온다 */
