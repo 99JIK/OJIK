@@ -108,14 +108,19 @@ export const userRoutes = new Hono<AuthEnv>()
             `),
         );
 
-        /** 최근 활동. 날짜별 제출 수를 12주치만. 한국 시간 기준 하루 */
+        /*
+         * 최근 활동. 날짜별 제출 수. 한국 시간 기준 하루.
+         *
+         * 26주(182일)를 준다. 12주면 격자가 12칸뿐이라 카드 폭의 4분의 1만 쓰고
+         * 나머지가 빈 채로 남았다. 반년이면 학기 하나가 들어가는 길이이기도 하다.
+         */
         const activity = rows<{ day: string; n: number }>(
             await db.execute(sql`
                 SELECT to_char((s.created_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS day,
                        count(*)::int AS n
                 FROM submissions s
                 WHERE s.user_id = ${u.id}
-                  AND s.created_at > now() - interval '84 days'
+                  AND s.created_at > now() - interval '182 days'
                   AND ${VISIBLE}
                 GROUP BY 1
                 ORDER BY 1
