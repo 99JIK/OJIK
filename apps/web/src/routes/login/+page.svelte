@@ -27,32 +27,30 @@
     }
 </script>
 
-<div class="mx-auto mt-10 max-w-sm">
-    <h1 class="text-xl font-bold">{mode === "login" ? "로그인" : "회원가입"}</h1>
+<!-- 첫 화면이라 가운데로 올린다. 카드 하나만 보이게 -->
+<div class="mx-auto mt-8 max-w-sm sm:mt-16">
+    <div class="mb-6 text-center">
+        <div class="flex items-baseline justify-center gap-1.5">
+            <span class="text-2xl font-bold tracking-tight text-blue-600 dark:text-blue-400">OJIK</span>
+            <span class="text-zinc-400">오직</span>
+        </div>
+        <p class="mt-1 text-sm text-zinc-500">
+            {mode === "login" ? "다시 오셨군요." : "계정을 만들면 문제를 풀 수 있습니다."}
+        </p>
+    </div>
 
-    <form onsubmit={submit} class="mt-6 flex flex-col gap-3">
+    <form onsubmit={submit} class="ojik-card flex flex-col gap-3 p-6">
         {#if mode === "register"}
             <label class="flex flex-col gap-1 text-sm">
                 아이디
-                <input
-                    bind:value={handle}
-                    required
-                    autocomplete="username"
-                    class="rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
-                />
+                <input bind:value={handle} required autocomplete="username" class="ojik-input" />
                 <span class="text-xs text-zinc-400">공개되는 표시 이름입니다. 로그인은 이메일로 합니다.</span>
             </label>
         {/if}
 
         <label class="flex flex-col gap-1 text-sm">
             이메일
-            <input
-                bind:value={email}
-                type="email"
-                required
-                autocomplete="email"
-                class="rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
-            />
+            <input bind:value={email} type="email" required autocomplete="email" class="ojik-input" />
         </label>
 
         <label class="flex flex-col gap-1 text-sm">
@@ -63,8 +61,11 @@
                 required
                 minlength={mode === "register" ? 8 : undefined}
                 autocomplete={mode === "login" ? "current-password" : "new-password"}
-                class="rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+                class="ojik-input"
             />
+            {#if mode === "register"}
+                <span class="text-xs text-zinc-400">8자 이상</span>
+            {/if}
         </label>
 
         {#if mode === "register"}
@@ -85,11 +86,7 @@
             </p>
         {/if}
 
-        <button
-            type="submit"
-            disabled={busy}
-            class="mt-2 rounded-md bg-blue-600 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
+        <button type="submit" disabled={busy} class="ojik-btn ojik-btn-primary mt-2 w-full">
             {busy ? "처리 중..." : mode === "login" ? "로그인" : "가입"}
         </button>
     </form>
@@ -99,7 +96,7 @@
             mode = mode === "login" ? "register" : "login";
             error = null;
         }}
-        class="mt-4 w-full text-sm text-zinc-500 hover:underline"
+        class="mt-4 w-full text-sm text-zinc-500 transition hover:text-zinc-800 hover:underline dark:hover:text-zinc-200"
     >
         {mode === "login" ? "계정이 없으신가요? 회원가입" : "이미 계정이 있으신가요? 로그인"}
     </button>

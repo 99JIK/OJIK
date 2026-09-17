@@ -3,7 +3,7 @@ import { z } from "zod";
 import { v } from "../validate";
 import { and, asc, desc, eq, ilike, sql, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, atLeast, blankOut, canAssist } from "@ojik/core";
+import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, MAX_CHECKER_BYTES, atLeast, blankOut, canAssist } from "@ojik/core";
 import { problems, testcases, tags, problemTags, submissions, collections, users, enqueue } from "@ojik/db";
 import { db } from "../db";
 import { alias } from "drizzle-orm/pg-core";
@@ -46,6 +46,10 @@ const ProblemBody = z.object({
     blankTemplate: z.string().nullable().optional(),
     blankLines: z.array(z.number().int().positive()).nullable().optional(),
     blankLanguage: z.enum(LANGUAGE_IDS).nullable().optional(),
+
+    /** checkerType 이 special 일 때의 체커 프로그램 */
+    checkerSource: z.string().max(MAX_CHECKER_BYTES).nullable().optional(),
+    checkerLanguage: z.enum(LANGUAGE_IDS).nullable().optional(),
 });
 
 const TestcaseBody = z.object({
@@ -108,13 +112,14 @@ async function loadEditable(user: User, id: number): Promise<Problem> {
 /**
  * 문제 행에서 답이 드러나는 칸을 지운다.
  *
- * blankTemplate 은 빈칸의 정답이 그대로 든 원본이다. 문제 상세는 로그인만 하면 누구나
- * 부르는 곳이라, 행을 통째로 내보내면 빈칸 답이 같이 나간다. 편집 화면은 이 함수를 안 거치는
- * 다른 라우트에서 받아 간다.
+ * blankTemplate 은 빈칸의 정답이 그대로 든 원본이고, checkerSource 는 어떤 답이 통과하는지를
+ * 코드로 적어 둔 것이다. 문제 상세는 로그인만 하면 누구나 부르는 곳이라, 행을 통째로
+ * 내보내면 둘 다 같이 나간다. 편집 화면은 이 함수를 안 거치는 /source 라우트로 받아 간다.
  */
-function stripAnswers(p: Problem): Omit<Problem, "blankTemplate"> {
-    const { blankTemplate: _drop, ...rest } = p;
-    void _drop;
+function stripAnswers(p: Problem): Omit<Problem, "blankTemplate" | "checkerSource"> {
+    const { blankTemplate: _t, checkerSource: _c, ...rest } = p;
+    void _t;
+    void _c;
     return rest;
 }
 
@@ -124,13 +129,36 @@ function stripAnswers(p: Problem): Omit<Problem, "blankTemplate"> {
  * 빈칸 문제를 원본 없이 저장할 수 있으면, 학생이 제출할 때가 되어서야 409 를 본다.
  * 만들 때 막는 게 낫다.
  */
-function assertKindFields(f: { kind?: string; blankTemplate?: string | null; blankLanguage?: string | null }): void {
-    if (f.kind !== "blank") return;
-    if (!f.blankTemplate?.trim()) {
-        throw new HTTPException(400, { message: "빈칸 문제는 원본 코드가 있어야 합니다" });
+function assertKindFields(f: {
+    kind?: string;
+    blankTemplate?: string | null;
+    blankLanguage?: string | null;
+    checkerType?: string;
+    checkerSource?: string | null;
+    checkerLanguage?: string | null;
+}): void {
+    if (f.kind === "blank") {
+        if (!f.blankTemplate?.trim()) {
+            throw new HTTPException(400, { message: "빈칸 문제는 원본 코드가 있어야 합니다" });
+        }
+        if (!f.blankLanguage) {
+            throw new HTTPException(400, { message: "빈칸 문제는 채점 언어를 정해야 합니다" });
+        }
     }
-    if (!f.blankLanguage) {
-        throw new HTTPException(400, { message: "빈칸 문제는 채점 언어를 정해야 합니다" });
+
+    /*
+     * 스페셜 저지인데 체커가 없으면 저장 못 하게 막는다.
+     *
+     * 안 막으면 학생이 제출할 때가 되어서야 채점 오류가 난다. 그때는 이미 여러 명이
+     * 제출한 뒤일 수 있다.
+     */
+    if (f.checkerType === "special") {
+        if (!f.checkerSource?.trim()) {
+            throw new HTTPException(400, { message: "스페셜 저지는 체커 프로그램이 있어야 합니다" });
+        }
+        if (!f.checkerLanguage) {
+            throw new HTTPException(400, { message: "스페셜 저지는 체커 언어를 정해야 합니다" });
+        }
     }
 }
 
@@ -439,6 +467,8 @@ export const problemRoutes = new Hono<AuthEnv>()
             blankTemplate: p.blankTemplate,
             blankLines: p.blankLines,
             blankLanguage: p.blankLanguage,
+            checkerSource: p.checkerSource,
+            checkerLanguage: p.checkerLanguage,
         });
     })
 

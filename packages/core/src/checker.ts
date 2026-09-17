@@ -35,6 +35,15 @@ export function check(
         }
         case "float":
             return checkFloat(actual.toString("utf8"), expected.toString("utf8"), floatEpsilon);
+        case "special":
+            /*
+             * 여기 오면 안 된다.
+             *
+             * 스페셜 저지는 문자열 비교가 아니라 체커 프로그램이 판정한다. 워커가 유형을
+             * 보고 다른 길로 보내야 하는데, 여기로 왔다는 건 그 분기를 빠뜨렸다는 뜻이다.
+             * 조용히 trim 으로 떨어뜨리면 답이 여러 개인 문제에서 맞는 답이 전부 틀린다.
+             */
+            throw new Error("스페셜 저지는 check() 로 판정하지 않습니다. 워커의 분기가 빠졌습니다.");
     }
 }
 
@@ -88,3 +97,43 @@ function firstDiff(a: string, e: string): string {
 function trunc(s: string, n = 80): string {
     return s.length > n ? s.slice(0, n) + "..." : s;
 }
+
+/**
+ * 스페셜 저지의 실행 규약.
+ *
+ * testlib 을 쓰지 않는다. 그건 체커 소스가 testlib.h 를 포함해야 하고 이미지에 그 헤더를
+ * 넣어야 한다. 답이 여러 개인 문제를 내려고 헤더 하나를 이미지에 박는 건 과하다.
+ *
+ * 대신 규약을 최소로 정한다. 체커는 argv 로 파일 세 개를 받는다.
+ *
+ *   argv[1]  입력       테스트케이스의 입력
+ *   argv[2]  기대 출력   출제자가 넣은 정답 파일
+ *   argv[3]  제출 출력   학생 프로그램이 낸 것
+ *
+ * 판정은 종료 코드로 한다.
+ *
+ *   0        정답
+ *   1        오답
+ *   그 외     채점 오류. 체커가 잘못된 것이지 학생이 틀린 게 아니다
+ *
+ * 종료 코드를 쓰는 이유는 stdout 파싱보다 오해할 여지가 적어서다. 체커가 죽거나 시간
+ * 초과가 나면 그 자체로 0 이 아닌 값이 되므로, 따로 다룰 필요 없이 채점 오류가 된다.
+ * 오답을 1 로 못 박는 것도 같은 이유다. 체커가 우연히 0 을 내서 틀린 답이 통과하는 일이
+ * 없어야 한다.
+ *
+ * 체커의 stderr 은 운영자에게만 보인다. 왜 틀렸는지 적어 두면 문제를 고칠 때 쓸모가 있다.
+ */
+export const CHECKER_EXIT = {
+    accepted: 0,
+    wrongAnswer: 1,
+} as const;
+
+/** 체커에 넘길 파일 이름. 샌드박스 안의 상대 경로다 */
+export const CHECKER_FILES = {
+    input: "checker.in",
+    expected: "checker.ans",
+    actual: "checker.out",
+} as const;
+
+/** 체커 소스 길이 상한. 채점기를 대신 돌리는 프로그램이라 길 이유가 없다 */
+export const MAX_CHECKER_BYTES = 64 * 1024;

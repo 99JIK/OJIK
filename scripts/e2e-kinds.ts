@@ -358,6 +358,82 @@ async function main() {
         ok("못 맞힌 것은 solved 가 아니다", m?.solved === false, `${m?.solved}`);
     }
 
+    console.log("\n== 스페셜 저지 ==");
+    {
+        /*
+         * 답이 여러 개인 문제를 만든다.
+         *
+         * "합이 7 이 되는 두 수를 아무거나" 라서 3 4 도 5 2 도 맞다. 기대 출력은 3 4 로
+         * 넣어 두지만 체커가 합만 보므로 5 2 도 통과해야 한다. 문자열 비교였다면 오답이다.
+         */
+        const checkerSource = [
+            "#include <cstdio>",
+            "int main(int argc, char** argv) {",
+            "    if (argc < 4) return 2;",
+            "    FILE* a = fopen(argv[2], \"r\");",
+            "    FILE* o = fopen(argv[3], \"r\");",
+            "    if (!a || !o) return 2;",
+            "    int x = 0, y = 0, p = 0, q = 0;",
+            "    if (fscanf(a, \"%d %d\", &x, &y) != 2) return 2;",
+            "    if (fscanf(o, \"%d %d\", &p, &q) != 2) { fprintf(stderr, \"two ints expected\"); return 1; }",
+            "    if (x + y != p + q) { fprintf(stderr, \"sum differs\"); return 1; }",
+            "    return 0;",
+            "}",
+        ].join("\n");
+
+        const made = await req<{ problem: { id: number } }>(admin, "/problems", {
+            method: "POST",
+            body: JSON.stringify({
+                ...BASE_PROBLEM,
+                title: "합이 같은 두 수",
+                checkerType: "special",
+                checkerSource,
+                checkerLanguage: "cpp",
+                ownerCollectionId: collectionId,
+            }),
+        });
+        ok("스페셜 저지 문제를 만든다 (201)", made.status === 201, `${made.status} ${made.body.error ?? ""}`);
+        const pid = made.body.problem.id;
+
+        await req(admin, `/problems/${pid}/testcases`, {
+            method: "PUT",
+            body: JSON.stringify({ testcases: [{ input: "7", output: "3 4", isSample: true, points: 100 }] }),
+        });
+
+        const view = await req<Record<string, unknown>>(student, `/problems/${pid}`);
+        ok(
+            "체커 소스가 학생에게 안 나간다",
+            !JSON.stringify(view.body).includes("fscanf"),
+            "응답에 체커가 들어 있음",
+        );
+
+        // 기대 출력과 다른 답. 문자열 비교면 오답, 체커면 정답
+        const alt = await req<{ submission: { id: number } }>(student, "/submissions", {
+            method: "POST",
+            body: JSON.stringify({ problemId: pid, language: "python3", sourceCode: "print(5, 2)" }),
+        });
+        const altVerdict = await waitJudged(student, alt.body.submission.id);
+        ok("기대 출력과 달라도 체커가 정답으로 본다", altVerdict === "accepted", `${altVerdict}`);
+
+        const bad = await req<{ submission: { id: number } }>(student, "/submissions", {
+            method: "POST",
+            body: JSON.stringify({ problemId: pid, language: "python3", sourceCode: "print(1, 1)" }),
+        });
+        const badVerdict = await waitJudged(student, bad.body.submission.id);
+        ok("합이 틀리면 오답", badVerdict === "wrong_answer", `${badVerdict}`);
+
+        const noChecker = await req(admin, "/problems", {
+            method: "POST",
+            body: JSON.stringify({
+                ...BASE_PROBLEM,
+                title: "체커 없는 스페셜",
+                checkerType: "special",
+                ownerCollectionId: collectionId,
+            }),
+        });
+        ok("체커 없이 못 만든다 (400)", noChecker.status === 400, `${noChecker.status}`);
+    }
+
     await cleanup();
     console.log(`\n통과 ${pass}, 실패 ${fail}`);
     process.exit(fail === 0 ? 0 : 1);

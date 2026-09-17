@@ -3,6 +3,7 @@
     import { get, post, patch, put } from "$lib/api";
     import {
         CHECKER_LABEL,
+        CHECKER_DESCRIPTION,
         CHECKER_TYPES,
         PROBLEM_LIMITS,
         PROBLEM_KINDS,
@@ -38,6 +39,44 @@
     let memoryLimitMb = $state<number>(PROBLEM_LIMITS.memoryMb.default);
     let checkerType = $state<CheckerType>("trim");
     let floatEpsilon = $state(1e-6);
+
+    /** checkerType 이 special 일 때. 학생에게는 안 내려간다 */
+    /**
+     * 예시 체커. placeholder 로만 쓴다.
+     *
+     * 규약을 글로만 적어 두면 첫 사용자가 인자 순서와 종료 코드를 맞추느라 헤맨다.
+     * 돌아가는 것 하나를 보여 주는 편이 설명 세 줄보다 낫다.
+     */
+    const CHECKER_EXAMPLE = [
+        "// 공백을 무시하고 토큰 단위로 비교하는 체커",
+        "#include <cstdio>",
+        "#include <string>",
+        "#include <vector>",
+        "",
+        "std::vector<std::string> readTokens(const char* path) {",
+        "    std::vector<std::string> v; char buf[1 << 16];",
+        "    FILE* f = fopen(path, " + JSON.stringify("r") + ");",
+        "    if (!f) return v;",
+        "    while (fscanf(f, " + JSON.stringify("%65535s") + ", buf) == 1) v.push_back(buf);",
+        "    fclose(f); return v;",
+        "}",
+        "",
+        "int main(int argc, char** argv) {",
+        "    if (argc < 4) return 2;                 // 인자가 모자라면 채점 오류",
+        "    auto ans = readTokens(argv[2]);         // 기대 출력",
+        "    auto out = readTokens(argv[3]);         // 제출 출력",
+        "    if (ans.size() != out.size()) {",
+        "        fprintf(stderr, " + JSON.stringify("토큰 개수가 다릅니다") + ");",
+        "        return 1;                           // 오답",
+        "    }",
+        "    for (size_t i = 0; i < ans.size(); i++)",
+        "        if (ans[i] != out[i]) return 1;",
+        "    return 0;                               // 정답",
+        "}",
+    ].join("\n");
+
+    let checkerSource = $state("");
+    let checkerLanguage = $state<string>("cpp");
     let stopOnFirstFail = $state(true);
     let isPublic = $state(false);
 
@@ -132,6 +171,15 @@
                  * 골격 원본은 상세에 안 실린다. 정답이 그대로 들어 있어서 뺐다.
                  * 고치려면 있어야 하므로 편집용 라우트에서 따로 받는다.
                  */
+                if (checkerType === "special") {
+                    // 체커 소스도 상세에 안 실린다. /source 로 따로 받는다
+                    const src = await get<{ checkerSource: string | null; checkerLanguage: string | null }>(
+                        `/problems/${id}/source`,
+                    ).catch(() => null);
+                    checkerSource = src?.checkerSource ?? "";
+                    checkerLanguage = src?.checkerLanguage ?? "cpp";
+                }
+
                 if (kind === "blank") {
                     const src = await get<{
                         blankTemplate: string | null;
@@ -195,6 +243,7 @@
             memoryLimitMb,
             checkerType,
             floatEpsilon,
+            ...(checkerType === "special" ? { checkerSource, checkerLanguage } : {}),
             stopOnFirstFail,
             isPublic,
             ownerCollectionId,
@@ -355,6 +404,7 @@
                         <option value={t}>{CHECKER_LABEL[t]}</option>
                     {/each}
                 </select>
+                <span class="mt-1 block text-xs text-zinc-500">{CHECKER_DESCRIPTION[checkerType]}</span>
             </label>
             {#if checkerType === "float"}
                 <label class="block text-sm">
@@ -368,6 +418,47 @@
                 </label>
             {/if}
         </div>
+
+        {#if checkerType === "special"}
+            <div class="space-y-3 rounded-md border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/20">
+                <div>
+                    <span class="block text-sm font-medium">체커 프로그램</span>
+                    <p class="mt-1 text-xs leading-relaxed text-zinc-500">
+                        인자 세 개를 받습니다: <code>입력 파일</code>, <code>기대 출력 파일</code>,
+                        <code>제출 출력 파일</code>. 종료 코드 <strong>0 이면 정답, 1 이면 오답</strong>이고
+                        그 외는 채점 오류로 봅니다. stderr 에 적은 것은 운영자만 봅니다.
+                        <br />
+                        체커도 샌드박스에서 돕니다. 학생에게는 내려가지 않습니다.
+                    </p>
+                </div>
+
+                <label class="block text-sm">
+                    <span class="mb-1 block font-medium">체커 언어</span>
+                    <select
+                        bind:value={checkerLanguage}
+                        class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                    >
+                        {#each LANGUAGES as l (l.id)}
+                            <option value={l.id}>{l.label}</option>
+                        {/each}
+                    </select>
+                </label>
+
+                <label class="block text-sm">
+                    <span class="mb-1 block font-medium">체커 소스</span>
+                    <textarea
+                        bind:value={checkerSource}
+                        rows="14"
+                        spellcheck="false"
+                        placeholder={CHECKER_EXAMPLE}
+                        class="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                    ></textarea>
+                    <span class="mt-1 block text-xs text-zinc-500">
+                        비워 두면 저장이 막힙니다. 안 막으면 학생이 제출할 때가 되어서야 채점 오류가 납니다.
+                    </span>
+                </label>
+            </div>
+        {/if}
 
         <label class="flex items-start gap-2 text-sm">
             <input type="checkbox" bind:checked={stopOnFirstFail} class="mt-0.5" />
