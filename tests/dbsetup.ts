@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { createDb, type DbHandle } from "@ojik/db";
+import { testDatabaseUrl } from "../scripts/testdburl";
 
 /**
  * DB 를 쓰는 테스트의 공통 준비.
@@ -10,22 +11,44 @@ import { createDb, type DbHandle } from "@ojik/db";
  */
 
 export async function openTestDb(max: number): Promise<DbHandle> {
-    const url = process.env.DATABASE_URL;
-    if (!url) {
-        throw new Error(
-            "DATABASE_URL 이 없습니다.\n" +
-                "  저장소 루트에 .env 가 있는지 보세요. .env.example 을 복사해 쓰면 됩니다.",
-        );
-    }
+    /*
+     * 개발 DB 가 아니라 테스트 DB 를 쓴다.
+     *
+     * 같은 DB 를 쓰면 워커가 테스트가 만든 큐 행을 집어 간다. 그래서 테스트마다 워커를
+     * 멈췄다 켜야 했다. 나눠 두면 워커를 켜 둔 채로 돌릴 수 있다.
+     *
+     * 테스트는 submissions 를 비우므로 개발 DB 를 가리키는 일이 절대 없어야 한다.
+     * 주소를 한 곳에서만 정하고 scripts 도 같은 함수를 본다.
+     */
+    const url = testDatabaseUrl();
+    const shown = url.replace(/:\/\/[^@]*@/, "://***@");
 
     const h = createDb(url, { max });
     try {
         await h.db.execute(sql`SELECT 1`);
     } catch (e) {
         await h.close().catch(() => {});
-        const why = e instanceof Error ? e.message : String(e);
         throw new Error(
-            `PostgreSQL 에 못 붙었습니다 (${url.replace(/:\/\/[^@]*@/, "://***@")}).\n` +
+            [
+                `테스트 DB 에 못 붙었습니다 (${shown}).`,
+                "  한 번만 준비하면 됩니다:  npm run db:test",
+                "  인프라가 먼저입니다:      npm run infra:up",
+                `  원인: ${e instanceof Error ? e.message : String(e)}`,
+            ].join("\n"),
+        );
+    }
+
+    // 시드가 안 돌았으면 테스트가 엉뚱한 곳에서 실패한다. 여기서 짚어 준다
+    const rows = await h.db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM problems`);
+    const [seeded] = Array.from(rows as Iterable<{ n: number }>);
+    if (Number(seeded?.n ?? 0) === 0) {
+        await h.close().catch(() => {});
+        throw new Error(["테스트 DB 에 시드 데이터가 없습니다.", "  npm run db:test 를 돌리세요."].join("\n"));
+    }
+    return h;
+}
+
+/***@")}).\n` +
                 "  먼저 인프라를 띄우세요:  npm run infra:up\n" +
                 "  이미 띄웠다면 마이그레이션이 안 돌았을 수 있습니다:  npm run db:migrate\n" +
                 `  원인: ${why}`,

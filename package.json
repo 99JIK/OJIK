@@ -15,6 +15,7 @@
         "dev:web": "npm -w @ojik/web run dev",
         "build": "npm -ws --if-present run build",
         "typecheck": "npm -ws --if-present run typecheck",
+        "db:test": "tsx scripts/test-db.ts",
         "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
         "test:unit": "node --import tsx --test tests/checker.test.ts",
         "db:generate": "npm -w @ojik/db run generate",
