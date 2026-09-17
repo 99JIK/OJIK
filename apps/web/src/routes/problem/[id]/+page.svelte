@@ -1,8 +1,12 @@
 <script lang="ts">
     import { page } from "$app/state";
     import { goto } from "$app/navigation";
-    import { get, post } from "$lib/api.js";
-    import { session } from "$lib/session.svelte.js";
+    import { get, post } from "$lib/api";
+    import { session } from "$lib/session.svelte";
+    import { meta } from "$lib/meta.svelte";
+    import Markdown from "$lib/Markdown.svelte";
+    import AnswerSubmit from "$lib/AnswerSubmit.svelte";
+    import BlankSubmit from "$lib/BlankSubmit.svelte";
 
     /**
      * 에디터는 제출 영역이 실제로 그려질 때만 받아 온다.
@@ -17,13 +21,19 @@
         editorPromise ??= import("$lib/Editor.svelte");
         return editorPromise;
     }
-    import type { ProblemDetail, Sample, LanguageOption } from "$lib/types.js";
+    import type { ProblemDetail, Sample, LanguageOption } from "$lib/types";
 
     const id = $derived(Number(page.params.id));
 
     let detail = $state<{
         problem: ProblemDetail;
+        /** 출제자. 계정이 지워졌으면 null 이다 */
+        author: { handle: string; displayName: string | null } | null;
         samples: Sample[];
+        /** kind=answer 일 때 문항. 기대 답은 안 온다 */
+        answerItems: Array<{ idx: number; points: number; prompt: string }>;
+        /** kind=blank 일 때 비운 줄을 지운 골격. 원본은 안 온다 */
+        blank: { lines: string[]; blankLines: number[]; language: string | null } | null;
         testcaseCount: number;
         canSubmit: boolean;
     } | null>(null);
@@ -50,14 +60,54 @@
 
     $effect(() => {
         void (async () => {
-            // 선택지를 화면에 배열로 박지 않고 서버에서 받는다.
-            // 언어 추가가 백엔드 한 곳에서 끝나는 이유
-            const r = await get<{ languages: LanguageOption[] }>("/languages");
-            languages = r.languages;
+            await meta.ensureLanguages();
+            languages = meta.languages;
             // 마지막에 쓴 언어를 기억한다. 매번 고르게 하면 번거롭다
             const saved = localStorage.getItem("lastLanguage");
-            language = saved && r.languages.some((l) => l.id === saved) ? saved : (r.languages[0]?.id ?? "");
+            language = saved && languages.some((l) => l.id === saved) ? saved : (languages[0]?.id ?? "");
         })();
+    });
+
+    /**
+     * 작성 중인 코드를 브라우저에 남긴다.
+     *
+     * 탭을 닫거나 새로고침해서 코드를 잃는 일이 흔하다. 문제와 언어별로 따로 보관해서
+     * 언어를 바꿔 가며 풀어도 섞이지 않는다. 제출에 성공하면 지운다.
+     */
+    const draftKey = $derived(`draft:${id}:${language}`);
+    let restored = $state(false);
+
+    $effect(() => {
+        const k = draftKey;
+        if (!language) return;
+        restored = false;
+        try {
+            const saved = localStorage.getItem(k);
+            if (saved) {
+                code = saved;
+                restored = true;
+            } else {
+                code = "";
+            }
+        } catch {
+            // 사생활 보호 모드 등에서 localStorage 가 막힐 수 있다. 그냥 안 쓴다
+        }
+    });
+
+    $effect(() => {
+        const k = draftKey;
+        const c = code;
+        if (!language) return;
+        // 타이핑마다 쓰면 낭비다. 멈춘 뒤에 한 번 쓴다
+        const t = setTimeout(() => {
+            try {
+                if (c.trim()) localStorage.setItem(k, c);
+                else localStorage.removeItem(k);
+            } catch {
+                // 저장이 막혀도 작성은 계속돼야 한다
+            }
+        }, 800);
+        return () => clearTimeout(t);
     });
 
     const mode = $derived(languages.find((l) => l.id === language)?.editorMode ?? "cpp");
@@ -72,6 +122,12 @@
         try {
             localStorage.setItem("lastLanguage", language);
             await post("/submissions", { problemId: id, language, sourceCode: code });
+            // 제출에 성공했으니 임시 보관본은 지운다
+            try {
+                localStorage.removeItem(draftKey);
+            } catch {
+                // 못 지워도 다음 제출 때 덮어쓴다
+            }
             void goto(`/submissions?problemId=${id}`);
         } catch (e) {
             submitError = e instanceof Error ? e.message : String(e);
@@ -88,10 +144,23 @@
 {:else}
     {@const p = detail.problem}
     <div class="flex items-baseline justify-between gap-4">
-        <h1 class="text-2xl font-bold">{p.id}. {p.title}</h1>
-        <a href="/submissions?problemId={p.id}" class="text-sm text-blue-600 hover:underline dark:text-blue-400">
-            채점 현황
-        </a>
+        <div>
+            <h1 class="text-2xl font-bold">{p.id}. {p.title}</h1>
+            {#if detail.author}
+                <!-- 출제자를 밝혀 둔다. 문제에 문제가 있을 때 누구에게 말할지가 분명해진다 -->
+                <p class="mt-1 text-xs text-zinc-400">
+                    출제 <a href="/user/{detail.author.handle}" class="hover:underline">{detail.author.handle}</a>
+                </p>
+            {/if}
+        </div>
+        <div class="flex shrink-0 gap-3 text-sm">
+            <a href="/problem/{p.id}/solutions" class="text-blue-600 hover:underline dark:text-blue-400">
+                풀이
+            </a>
+            <a href="/submissions?problemId={p.id}" class="text-blue-600 hover:underline dark:text-blue-400">
+                채점 현황
+            </a>
+        </div>
     </div>
 
     <dl class="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-zinc-200 bg-zinc-200 text-sm sm:grid-cols-4 dark:border-zinc-800 dark:bg-zinc-800">
@@ -106,28 +175,29 @@
     <section class="mt-8 space-y-6">
         <div>
             <h2 class="mb-2 text-lg font-semibold">문제</h2>
-            <div class="whitespace-pre-wrap text-sm leading-relaxed">{p.statement}</div>
+            <Markdown source={p.statement} />
         </div>
         {#if p.inputDesc}
             <div>
                 <h2 class="mb-2 text-lg font-semibold">입력</h2>
-                <div class="whitespace-pre-wrap text-sm leading-relaxed">{p.inputDesc}</div>
+                <Markdown source={p.inputDesc} />
             </div>
         {/if}
         {#if p.outputDesc}
             <div>
                 <h2 class="mb-2 text-lg font-semibold">출력</h2>
-                <div class="whitespace-pre-wrap text-sm leading-relaxed">{p.outputDesc}</div>
+                <Markdown source={p.outputDesc} />
             </div>
         {/if}
 
         {#each detail.samples as s, i (s.idx)}
+            <!-- grid 자식에 min-w-0. 없으면 긴 예제 한 줄이 칸을 밀어 페이지가 가로로 넘친다 -->
             <div class="grid gap-3 sm:grid-cols-2">
-                <div>
+                <div class="min-w-0">
                     <h3 class="mb-1 text-sm font-semibold">예제 입력 {i + 1}</h3>
                     <pre class="overflow-x-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.input}</pre>
                 </div>
-                <div>
+                <div class="min-w-0">
                     <h3 class="mb-1 text-sm font-semibold">예제 출력 {i + 1}</h3>
                     <pre class="overflow-x-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">{s.output}</pre>
                 </div>
@@ -137,7 +207,7 @@
         {#if p.hint}
             <div>
                 <h2 class="mb-2 text-lg font-semibold">힌트</h2>
-                <div class="whitespace-pre-wrap text-sm leading-relaxed">{p.hint}</div>
+                <Markdown source={p.hint} />
             </div>
         {/if}
     </section>
@@ -151,6 +221,21 @@
             </p>
         {:else if !detail.canSubmit}
             <p class="rounded-md bg-zinc-100 px-4 py-3 text-sm dark:bg-zinc-900">지금은 제출할 수 없는 문제입니다.</p>
+        {:else if p.kind === "answer"}
+            <AnswerSubmit problemId={id} items={detail.answerItems ?? []} />
+        {:else if p.kind === "blank"}
+            {#if detail.blank}
+                <BlankSubmit
+                    problemId={id}
+                    lines={detail.blank.lines}
+                    blankLines={detail.blank.blankLines}
+                    language={detail.blank.language}
+                />
+            {:else}
+                <p class="rounded-md bg-zinc-100 px-4 py-3 text-sm text-zinc-500 dark:bg-zinc-900">
+                    아직 골격이 없습니다. 출제자가 채워야 풀 수 있습니다.
+                </p>
+            {/if}
         {:else}
             <div class="mb-2 flex items-center gap-3">
                 <select
@@ -161,7 +246,21 @@
                         <option value={l.id}>{l.label}</option>
                     {/each}
                 </select>
-                <span class="text-xs text-zinc-500">{detail.problem.checkerType === "trim" ? "줄 끝 공백은 무시됩니다" : ""}</span>
+                <span class="text-xs text-zinc-500">
+                    {detail.problem.checkerType === "trim" ? "줄 끝 공백은 무시됩니다" : ""}
+                </span>
+                {#if restored && code.trim()}
+                    <span class="ml-auto flex items-center gap-2 text-xs text-zinc-400">
+                        작성 중이던 코드를 불러왔습니다
+                        <button
+                            onclick={() => {
+                                code = "";
+                                restored = false;
+                            }}
+                            class="underline hover:text-zinc-600">지우기</button
+                        >
+                    </span>
+                {/if}
             </div>
 
             {#if language}

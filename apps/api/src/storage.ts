@@ -62,3 +62,38 @@ export async function removeProblemData(problemId: number): Promise<void> {
         force: true,
     });
 }
+
+/**
+ * 본문에 넣는 그림.
+ *
+ * 레이아웃: {DATA_DIR}/uploads/{sha 앞 2글자}/{sha}.{ext}
+ *
+ * 이름이 내용 해시라서 같은 그림을 여러 번 올려도 한 벌만 남는다. 앞 2글자로 한 단계
+ * 나누는 건 디렉터리 하나에 파일이 수만 개 쌓이는 걸 피하려는 것이다.
+ *
+ * DB 에 행을 안 만든다. 본문의 마크다운이 곧 참조이고, 그걸 세어서 고아 파일을 지우는
+ * 일은 지금 규모에서 필요 없다. 파일이 남는 쪽이 본문에서 그림이 사라지는 것보다 낫다.
+ */
+export function uploadPath(name: string): string {
+    return path.join(env.DATA_DIR, "uploads", name.slice(0, 2), name);
+}
+
+export async function writeUpload(name: string, buf: Buffer): Promise<void> {
+    const p = uploadPath(name);
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    // 내용 해시라 이미 있으면 같은 파일이다. 다시 쓸 이유가 없다
+    try {
+        await fs.access(p);
+        return;
+    } catch {
+        await fs.writeFile(p, buf);
+    }
+}
+
+export async function readUpload(name: string): Promise<Buffer | null> {
+    try {
+        return await fs.readFile(uploadPath(name));
+    } catch {
+        return null;
+    }
+}

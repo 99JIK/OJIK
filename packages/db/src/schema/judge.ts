@@ -10,6 +10,8 @@ export const judgeWorkers = pgTable(
         /** 설정값 또는 hostname-pid. 제출의 claimedBy 와 맞춰 본다 */
         id: text().primaryKey(),
         hostname: text().notNull(),
+        /** 같은 호스트에서 재시작할 때 죽은 등록인지 가리는 데 쓴다 */
+        pid: integer().notNull().default(0),
         version: text().notNull().default(""),
 
         /** 이 워커가 동시에 잡을 수 있는 제출 수 */

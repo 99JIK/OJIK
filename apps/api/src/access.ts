@@ -1,5 +1,5 @@
 import { and, eq, asc } from "drizzle-orm";
-import { atLeast, isRunning, hasEnded, canRevealVerdict } from "@ojik/core";
+import { atLeast, isRunning, hasEnded, canRevealVerdict, canAssist } from "@ojik/core";
 import {
     collections,
     collectionItems,
@@ -75,7 +75,46 @@ export async function problemAccess(user: User | null, problem: Problem): Promis
         return { canView: true, canSubmit: true, collection: gate.collection, member: gate.member };
     }
 
+    /*
+     * 강의 전용 문제. 그 강의의 멤버와 운영자에게 열린다.
+     *
+     * activeGate 로는 안 된다. 거기는 시간 제한이 있는 컬렉션만 보는데 교재는 timing 이
+     * none 이다. 시간 제한을 감춘 문제를 여는 근거로 쓰는 것과, 강의 소속을 근거로 쓰는 것은
+     * 다른 규칙이라 따로 둔다.
+     */
+    if (problem.ownerCollectionId !== null) {
+        const [col] = await db
+            .select()
+            .from(collections)
+            .where(eq(collections.id, problem.ownerCollectionId));
+        if (col) {
+            const a = await collectionAccess(user, col);
+            if (a.canManage) return { canView: true, canSubmit: true, collection: col, member: a.member };
+            if (a.member) return { canView: true, canSubmit: true, collection: col, member: a.member };
+        }
+        // 강의 밖에서는 공개 여부와 무관하게 안 보인다
+        return { canView: false, canSubmit: false, ...none };
+    }
+
     return { canView: publiclyOpen, canSubmit: publiclyOpen, ...none };
+}
+
+/**
+ * 이 문제를 고칠 수 있는지.
+ *
+ * 공개 아카이브 문제는 출제자(staff) 몫이고, 강의 전용 문제는 그 강의의 운영자 몫이다.
+ * 강사가 아카이브에 문제를 쌓게 두면 되돌리기 어려워서 이렇게 나눈다.
+ */
+export async function canEditProblem(user: User, problem: Problem): Promise<boolean> {
+    if (atLeast(user.role, "staff")) return true;
+    if (problem.ownerCollectionId === null) return false;
+
+    const [col] = await db.select().from(collections).where(eq(collections.id, problem.ownerCollectionId));
+    if (!col) return false;
+
+    // 조교도 문제를 고친다. 과제를 손보는 건 조교가 실제로 하는 일이다
+    const a = await collectionAccess(user, col);
+    return a.canManage || canAssist(a.member?.role);
 }
 
 /**
@@ -97,7 +136,9 @@ export async function collectionAccess(
         member = m ?? null;
     }
 
-    const canManage = isStaff || member?.role === "manager";
+    // 만든 사람은 멤버 표에 없어도 자기 컬렉션을 운영한다. 강사가 강의를 열면
+    // 스스로를 manager 로 넣어야 관리가 되는 건 말이 안 된다
+    const canManage = isStaff || c.ownerId === user?.id || member?.role === "manager";
     if (canManage) return { canView: true, canManage, member };
 
     if (c.visibility === "private") return { canView: !!member, canManage: false, member };

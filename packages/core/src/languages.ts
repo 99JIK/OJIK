@@ -48,10 +48,17 @@ export interface LanguageSpec {
     compile: CompileSpec | null;
     run: RunSpec;
     /** CodeMirror 6 언어 확장 선택 키 */
-    editorMode: "c" | "cpp" | "python" | "java";
+    editorMode: EditorMode;
 }
 
-export type RunnerId = "c-cpp" | "python" | "java";
+/**
+ * CodeMirror 6 에서 고를 문법 확장. 언어마다 하나씩 두지 않고 문법 단위로 묶는다.
+ * 여기 없는 값을 쓰면 에디터가 cpp 로 떨어진다. 언어를 늘릴 때 새 문법이 필요하면
+ * 이 유니온에 먼저 넣어야 웹이 타입으로 잡아 준다
+ */
+export type EditorMode = "c" | "cpp" | "python" | "java" | "javascript";
+
+export type RunnerId = "c-cpp" | "python" | "java" | "pypy" | "node";
 
 const COMPILE_LIMITS: StepLimits = {
     timeMs: 10_000,
@@ -90,6 +97,36 @@ export const LANGUAGES: readonly LanguageSpec[] = [
         },
         run: { argv: ["./Main"], timeFactorPercent: 100, timeExtraMs: 0, memoryExtraKb: 0, procLimit: 1 },
         editorMode: "cpp",
+    },
+    {
+        // 표준만 다르고 이미지는 c-cpp 를 그대로 쓴다. 추가 비용이 사실상 없다.
+        // 오래된 교재 코드나 대회 규정이 C++17 을 요구하는 경우가 있다
+        id: "cpp17",
+        label: "C++17 (g++ 14)",
+        sourceName: "Main.cc",
+        extension: "cc",
+        runner: "c-cpp",
+        compile: {
+            argv: ["/usr/bin/g++", "-x", "c++", "-std=gnu++17", "-O2", "-w", "-static", "-o", "Main", "Main.cc"],
+            limits: COMPILE_LIMITS,
+            artifacts: ["Main"],
+        },
+        run: { argv: ["./Main"], timeFactorPercent: 100, timeExtraMs: 0, memoryExtraKb: 0, procLimit: 1 },
+        editorMode: "cpp",
+    },
+    {
+        id: "c99",
+        label: "C99 (gcc 14)",
+        sourceName: "Main.c",
+        extension: "c",
+        runner: "c-cpp",
+        compile: {
+            argv: ["/usr/bin/gcc", "-x", "c", "-std=gnu99", "-O2", "-w", "-static", "-o", "Main", "Main.c", "-lm"],
+            limits: COMPILE_LIMITS,
+            artifacts: ["Main"],
+        },
+        run: { argv: ["./Main"], timeFactorPercent: 100, timeExtraMs: 0, memoryExtraKb: 0, procLimit: 1 },
+        editorMode: "c",
     },
     {
         id: "python3",
@@ -147,6 +184,55 @@ export const LANGUAGES: readonly LanguageSpec[] = [
         },
         editorMode: "java",
     },
+    {
+        /**
+         * PyPy. 경쟁 프로그래밍에서 가치가 제일 크다. 같은 파이썬 코드가 5~20배 빨라져서
+         * CPython 으로는 시간 초과인 풀이가 통과한다.
+         *
+         * 시간 배율을 CPython(300%)보다 낮게 잡는다. JIT 웜업이 있어 100% 로는 빠듯하다.
+         */
+        id: "pypy3",
+        label: "PyPy 3",
+        sourceName: "Main.py",
+        extension: "py",
+        runner: "pypy",
+        compile: {
+            argv: ["/usr/bin/pypy3", "-m", "py_compile", "Main.py"],
+            limits: COMPILE_LIMITS,
+            artifacts: ["Main.py"],
+        },
+        run: {
+            argv: ["/usr/bin/pypy3", "-S", "Main.py"],
+            timeFactorPercent: 150,
+            timeExtraMs: 1000,
+            // JIT 가 코드를 들고 있어 CPython 보다 기본 메모리를 더 쓴다
+            memoryExtraKb: 96 * 1024,
+            procLimit: 1,
+        },
+        editorMode: "python",
+    },
+    {
+        id: "javascript",
+        label: "Node.js 22",
+        sourceName: "Main.js",
+        extension: "js",
+        runner: "node",
+        compile: {
+            // 문법 검사만. 이게 없으면 SyntaxError 가 컴파일 에러가 아니라 런타임 에러로 잡힌다
+            argv: ["/usr/bin/node", "--check", "Main.js"],
+            limits: COMPILE_LIMITS,
+            artifacts: ["Main.js"],
+        },
+        run: {
+            argv: ["/usr/bin/node", "Main.js"],
+            timeFactorPercent: 200,
+            timeExtraMs: 1000,
+            memoryExtraKb: 64 * 1024,
+            // V8 이 GC 와 컴파일 스레드를 띄운다
+            procLimit: 16,
+        },
+        editorMode: "javascript",
+    },
 ] as const;
 
 const BY_ID = new Map(LANGUAGES.map((l) => [l.id, l]));
@@ -166,7 +252,7 @@ export function requireLanguage(id: string): LanguageSpec {
     return lang;
 }
 
-export const RUNNER_IDS: readonly RunnerId[] = ["c-cpp", "python", "java"];
+export const RUNNER_IDS: readonly RunnerId[] = ["c-cpp", "python", "java", "pypy", "node"];
 
 /** 문제 제한에 언어 보정을 먹인 실제 실행 상한 */
 export function effectiveRunLimits(

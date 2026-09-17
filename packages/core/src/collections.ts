@@ -23,6 +23,33 @@ export const PRESET_LABEL: Record<CollectionPreset, string> = {
     exam: "코딩 테스트",
 };
 
+/**
+ * 만들 때 고르는 화면에 붙일 한 줄 설명.
+ *
+ * 넷의 차이는 축 값 조합인데, 축 이름(timing, reveal, joinPolicy)을 그대로 보여 주면
+ * 처음 쓰는 사람은 뭘 고를지 모른다. 무엇에 쓰는 물건인지로 적는다.
+ */
+export const PRESET_DESCRIPTION: Record<CollectionPreset, string> = {
+    course: "설명과 문제를 섞어 순서대로 읽습니다. 수업 자료와 연습 문제에 씁니다.",
+    problemset: "문제만 모읍니다. 누가 어디까지 풀었는지 진도로 봅니다.",
+    contest: "정해진 시각에 다 같이 시작합니다. 순위표가 붙고 끝나기 전에는 얼립니다.",
+    exam: "각자 시작을 누른 시점부터 시간이 흐릅니다. 결과는 끝난 뒤에 공개합니다.",
+};
+
+/**
+ * 제목에서 주소를 만든다.
+ *
+ * 영문과 숫자만 남긴다. 한글 제목이면 남는 게 없는데, 그때는 부르는 쪽이 대체값을 준다.
+ * 한글을 로마자로 바꾸는 건 규칙이 지저분하고 결과도 예쁘지 않아서 안 한다.
+ */
+export function slugify(title: string): string {
+    return title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 48);
+}
+
 /** 축 1: 시간 창 */
 export const TIMINGS = ["none", "fixed", "per_user"] as const;
 export type Timing = (typeof TIMINGS)[number];
@@ -69,8 +96,33 @@ export const JOIN_POLICY_LABEL: Record<JoinPolicy, string> = {
 export const ITEM_KINDS = ["problem", "text"] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
 
-export const MEMBER_ROLES = ["member", "manager"] as const;
+/**
+ * 컬렉션 안에서의 역할.
+ *
+ * 전역 역할과 별개다. 전역이 사용자여도 특정 강의에서는 조교일 수 있고, 전역 출제자여도
+ * 남의 강의에서는 수강생이다. 강의를 여는 데만 전역 instructor 가 필요하고, 그 뒤로는
+ * 여기 적힌 역할이 그 강의의 권한을 정한다.
+ *
+ *   member   수강생. 문제를 푼다
+ *   ta       조교. 명단과 진도를 보고 문제를 고친다. 명단과 구성은 못 바꾼다
+ *   manager  공동 운영자. 컬렉션 설정, 항목, 명단까지 전부
+ *
+ * 만든 사람(collections.ownerId)은 manager 로 치고 지우기까지 할 수 있다. 여기에 owner 를
+ * 넣지 않는 건, 멤버 표에 안 들어간 사람도 만든 사람일 수 있어서다.
+ */
+export const MEMBER_ROLES = ["member", "ta", "manager"] as const;
 export type MemberRole = (typeof MEMBER_ROLES)[number];
+
+export const MEMBER_ROLE_LABEL: Record<MemberRole, string> = {
+    member: "수강생",
+    ta: "조교",
+    manager: "공동 운영자",
+};
+
+/** 조교 이상인지. 명단과 진도를 보고 문제를 고칠 수 있다 */
+export function canAssist(role: MemberRole | null | undefined): boolean {
+    return role === "ta" || role === "manager";
+}
 
 /** ICPC 오답 1회당 붙는 페널티 분. 관례값이지 표준이 아니다 */
 export const DEFAULT_PENALTY_MINUTES = 20;

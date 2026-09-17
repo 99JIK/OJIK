@@ -19,6 +19,8 @@
                 return (await import("@codemirror/lang-python")).python();
             case "java":
                 return (await import("@codemirror/lang-java")).java();
+            case "javascript":
+                return (await import("@codemirror/lang-javascript")).javascript();
             default:
                 return (await import("@codemirror/lang-cpp")).cpp();
         }

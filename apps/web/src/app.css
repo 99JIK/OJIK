@@ -13,6 +13,77 @@ html {
     color-scheme: light dark;
 }
 
+/*
+ * 스크롤바.
+ *
+ * 기본 스크롤바가 두껍고 밝아서, 나란히 보기처럼 칸이 여럿인 화면에서 제일 눈에 띄는
+ * 요소가 되어 버린다. 얇게 깔고 색을 죽인다.
+ *
+ * 표준 속성(scrollbar-width, scrollbar-color)을 먼저 쓰고 webkit 을 뒤에 둔다.
+ * 파이어폭스는 표준만 보고, 크롬은 둘 다 보는데 webkit 쪽이 더 세밀하다.
+ */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-zinc-300) transparent;
+}
+:root:is(.dark) * {
+    scrollbar-color: var(--color-zinc-700) transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+    background: var(--color-zinc-300);
+    border-radius: 9999px;
+    /* 트랙과 붙지 않게 안쪽으로 물린다. 배경색과 같은 테두리를 둘러 여백처럼 보이게 한다 */
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--color-zinc-400);
+    background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+    background: transparent;
+}
+:root:is(.dark) *::-webkit-scrollbar-thumb {
+    background: var(--color-zinc-700);
+    background-clip: content-box;
+}
+:root:is(.dark) *::-webkit-scrollbar-thumb:hover {
+    background: var(--color-zinc-600);
+    background-clip: content-box;
+}
+
+/*
+ * 페이지가 가로로 안 넘치게 한다.
+ *
+ * 긴 코드 줄이나 넓은 표가 하나만 있어도 본문 전체가 옆으로 밀린다. 넘칠 만한 것은
+ * 각자 스크롤 칸에 들어가야 하고, 그걸 빠뜨렸을 때 화면 전체가 망가지지는 않게 막아 둔다.
+ */
+body {
+    overflow-x: hidden;
+}
+
+/*
+ * grid 칸이 내용 때문에 벌어지지 않게 한다.
+ *
+ * 1fr 은 minmax(auto, 1fr) 이라 칸의 최소 너비가 내용의 min-content 다. 긴 코드 한 줄이나
+ * 넓은 표가 하나만 있어도 칸이 그만큼 벌어지고 페이지가 가로로 넘친다. 안쪽에
+ * overflow-x: auto 를 걸어도 이 최소값은 안 줄어든다.
+ *
+ * :where() 로 감싸 우선순위를 0 으로 둔다. 어쩌다 min-width 가 필요한 자리는 클래스를
+ * 직접 주면 그쪽이 이긴다.
+ */
+:where(.grid) > * {
+    min-width: 0;
+}
+
 /**
  * 목록 표 공통 스타일.
  *
@@ -37,4 +108,150 @@ html {
     .ojik-table td:last-child {
         padding-inline-end: 0;
     }
+}
+
+/**
+ * 마크다운 본문 스타일.
+ *
+ * Tailwind 의 preflight 가 h1, ul 같은 것의 기본 스타일을 지운다. 본문은 사람이 쓴
+ * 문서라 그 기본값이 필요하므로 여기서 되살린다. typography 플러그인을 안 쓰는 이유는
+ * 번들을 더 늘리지 않으려는 것이고, 필요한 것이 아래 정도뿐이기 때문이다.
+ */
+@layer components {
+    .ojik-md {
+        line-height: 1.7;
+    }
+    .ojik-md > *:first-child {
+        margin-top: 0;
+    }
+    .ojik-md > *:last-child {
+        margin-bottom: 0;
+    }
+    .ojik-md p,
+    .ojik-md ul,
+    .ojik-md ol,
+    .ojik-md blockquote,
+    .ojik-md pre,
+    .ojik-md table {
+        margin-block: calc(var(--spacing) * 3);
+    }
+    .ojik-md h1,
+    .ojik-md h2,
+    .ojik-md h3,
+    .ojik-md h4 {
+        font-weight: 600;
+        margin-block: calc(var(--spacing) * 5) calc(var(--spacing) * 2);
+    }
+    .ojik-md h1 { font-size: 1.35rem; }
+    .ojik-md h2 { font-size: 1.15rem; }
+    .ojik-md h3 { font-size: 1.05rem; }
+
+    .ojik-md ul { list-style: disc; padding-inline-start: calc(var(--spacing) * 5); }
+    .ojik-md ol { list-style: decimal; padding-inline-start: calc(var(--spacing) * 5); }
+    .ojik-md li { margin-block: calc(var(--spacing) * 1); }
+
+    .ojik-md a {
+        color: var(--color-blue-600);
+        text-decoration: underline;
+    }
+    :root:is(.dark) .ojik-md a { color: var(--color-blue-400); }
+
+    /* 인라인 코드와 코드 블록. 블록 안의 코드는 배경을 두 번 칠하지 않는다 */
+    .ojik-md code {
+        font-family: var(--font-mono);
+        font-size: 0.875em;
+        background: var(--color-zinc-100);
+        padding: 0.1em 0.35em;
+        border-radius: 0.25rem;
+    }
+    :root:is(.dark) .ojik-md code { background: var(--color-zinc-800); }
+    .ojik-md pre {
+        background: var(--color-zinc-100);
+        padding: calc(var(--spacing) * 3);
+        border-radius: 0.375rem;
+        overflow-x: auto;
+    }
+    :root:is(.dark) .ojik-md pre { background: var(--color-zinc-900); }
+    .ojik-md pre code { background: none; padding: 0; font-size: 0.8125rem; }
+
+    /*
+     * 코드 블록 색.
+     *
+     * lezer 의 classHighlighter 가 tok-* 클래스를 붙인다. 에디터 테마를 쓰지 않는 건,
+     * 본문 속 코드까지 어두운 배경이 되면 글 흐름이 끊기기 때문이다. 배경은 그대로 두고
+     * 글자색만 바꾼다.
+     *
+     * 색은 밝은 배경에서 대비가 나오게 골랐다. 다크 모드는 같은 계열을 밝게 올린다.
+     */
+    .ojik-md .tok-keyword { color: #7c3aed; }
+    .ojik-md .tok-comment { color: #71717a; font-style: italic; }
+    .ojik-md .tok-string,
+    .ojik-md .tok-string2 { color: #15803d; }
+    .ojik-md .tok-number,
+    .ojik-md .tok-bool,
+    .ojik-md .tok-null { color: #b45309; }
+    .ojik-md .tok-typeName,
+    .ojik-md .tok-className,
+    .ojik-md .tok-namespace { color: #0e7490; }
+    .ojik-md .tok-function,
+    .ojik-md .tok-macroName { color: #1d4ed8; }
+    .ojik-md .tok-operator,
+    .ojik-md .tok-punctuation { color: #52525b; }
+    .ojik-md .tok-propertyName { color: #be185d; }
+
+    :root:is(.dark) .ojik-md .tok-keyword { color: #c4b5fd; }
+    :root:is(.dark) .ojik-md .tok-comment { color: #a1a1aa; }
+    :root:is(.dark) .ojik-md .tok-string,
+    :root:is(.dark) .ojik-md .tok-string2 { color: #86efac; }
+    :root:is(.dark) .ojik-md .tok-number,
+    :root:is(.dark) .ojik-md .tok-bool,
+    :root:is(.dark) .ojik-md .tok-null { color: #fcd34d; }
+    :root:is(.dark) .ojik-md .tok-typeName,
+    :root:is(.dark) .ojik-md .tok-className,
+    :root:is(.dark) .ojik-md .tok-namespace { color: #67e8f9; }
+    :root:is(.dark) .ojik-md .tok-function,
+    :root:is(.dark) .ojik-md .tok-macroName { color: #93c5fd; }
+    :root:is(.dark) .ojik-md .tok-operator,
+    :root:is(.dark) .ojik-md .tok-punctuation { color: #a1a1aa; }
+    :root:is(.dark) .ojik-md .tok-propertyName { color: #f9a8d4; }
+
+    .ojik-md blockquote {
+        border-inline-start: 3px solid var(--color-zinc-300);
+        padding-inline-start: calc(var(--spacing) * 3);
+        color: var(--color-zinc-600);
+    }
+    :root:is(.dark) .ojik-md blockquote {
+        border-color: var(--color-zinc-700);
+        color: var(--color-zinc-400);
+    }
+
+    /* 표는 좁은 화면에서 가로 스크롤이 필요하다 */
+    .ojik-md table {
+        display: block;
+        overflow-x: auto;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+    }
+    .ojik-md th,
+    .ojik-md td {
+        border: 1px solid var(--color-zinc-200);
+        padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+    }
+    :root:is(.dark) .ojik-md :is(th, td) { border-color: var(--color-zinc-800); }
+    .ojik-md th { background: var(--color-zinc-50); font-weight: 600; }
+    :root:is(.dark) .ojik-md th { background: var(--color-zinc-900); }
+
+    .ojik-md img { max-width: 100%; height: auto; }
+
+    /* 도식은 가운데로. SVG 가 컨테이너를 넘지 않게 */
+    .ojik-mermaid {
+        display: flex;
+        justify-content: center;
+        margin-block: calc(var(--spacing) * 4);
+        overflow-x: auto;
+    }
+    .ojik-mermaid svg { max-width: 100%; height: auto; }
+
+    /* 목록 안이나 좁은 자리에 넣을 때 */
+    .ojik-md-compact :is(p, ul, ol) { margin-block: calc(var(--spacing) * 2); }
 }

@@ -54,6 +54,8 @@ export class RunnerPool {
     private waiters = new Map<RunnerId, Waiter[]>();
     /** 못 띄운 러너와 그 사유. 해당 언어 제출이 왔을 때 그대로 알려준다 */
     private unavailable = new Map<RunnerId, string>();
+    /** 지금 띄우는 중인 러너. 같은 러너로 동시에 들어오면 한 번만 만든다 */
+    private starting = new Map<RunnerId, Promise<void>>();
     private boxesPerContainer: number;
 
     constructor() {
@@ -66,11 +68,13 @@ export class RunnerPool {
     }
 
     /**
-     * 러너 하나가 안 떠도 나머지는 살린다.
+     * 기동 시에는 docker 연결과 박스 id 배분만 확인한다.
      *
-     * java 이미지가 없다고 C 제출까지 채점을 못 하는 건 말이 안 된다.
-     * 못 띄운 러너는 기억해 뒀다가, 그 언어 제출이 왔을 때 사유를 그대로 돌려준다.
-     * 전부 실패하면 그때는 기동을 포기한다.
+     * 러너 컨테이너는 그 언어 제출이 처음 올 때 띄운다. 미리 다 띄우면 쓰지도 않는
+     * 언어의 컨테이너가 상주해서, 언어를 늘릴수록 메모리와 기동 시간이 선형으로 는다.
+     * 지연 기동이면 언어를 20개 등록해도 안 쓰는 건 비용이 0이다.
+     *
+     * 첫 제출만 컨테이너 기동만큼(1초 남짓) 더 걸리고 그 뒤로는 같다.
      */
     async start(): Promise<void> {
         await this.connect();
@@ -83,50 +87,68 @@ export class RunnerPool {
             );
         }
 
-        // 박스 id 를 러너와 replica 를 가로질러 전역으로 센다.
-        // 컨테이너마다 0 부터 다시 시작하면 샌드박스 uid 가 겹쳐서, 한 언어의 프로세스 사용량이
-        // 다른 언어의 제출을 EAGAIN 으로 죽인다. 자세한 건 config.ts 의 BOX_ID_BASE 주석
+        /**
+         * 박스 id 는 기동 때 전부 배분해 둔다. 나중에 띄우는 러너도 자기 몫이 정해져 있어야
+         * 한다. 컨테이너마다 0 부터 다시 세면 샌드박스 uid 가 겹쳐서, 한 언어의 프로세스
+         * 사용량이 다른 언어의 제출을 EAGAIN 으로 죽인다. config.ts 의 BOX_ID_BASE 주석 참고.
+         */
         let nextBoxId = config.BOX_ID_BASE;
-
         for (const runner of RUNNER_IDS) {
-            try {
-                const slots: ContainerSlot[] = [];
-                const boxes: Box[] = [];
-                for (let r = 0; r < config.RUNNER_REPLICAS; r++) {
-                    const key = `${runner}-${r}`;
-                    const slot = await this.ensureContainer(runner, key);
-                    slots.push(slot);
-                    for (let b = 0; b < this.boxesPerContainer; b++) {
-                        const boxId = nextBoxId++;
-                        boxes.push({
-                            runner,
-                            containerKey: key,
-                            boxId,
-                            hostDir: path.join(slot.hostBoxRoot, String(boxId), "box"),
-                            hostMetaDir: path.join(slot.hostBoxRoot, String(boxId)),
-                        });
-                    }
+            const boxes: Box[] = [];
+            for (let r = 0; r < config.RUNNER_REPLICAS; r++) {
+                const key = `${runner}-${r}`;
+                const hostBoxRoot = path.join(config.BOX_ROOT, config.WORKER_ID, key);
+                for (let b = 0; b < this.boxesPerContainer; b++) {
+                    const boxId = nextBoxId++;
+                    boxes.push({
+                        runner,
+                        containerKey: key,
+                        boxId,
+                        hostDir: path.join(hostBoxRoot, String(boxId), "box"),
+                        hostMetaDir: path.join(hostBoxRoot, String(boxId)),
+                    });
                 }
-                this.slots.set(runner, slots);
-                this.free.set(runner, boxes);
-                this.waiters.set(runner, []);
-                log.info("runner ready", { runner, containers: slots.length, boxes: boxes.length });
-            } catch (e) {
+            }
+            this.free.set(runner, boxes);
+            this.waiters.set(runner, []);
+        }
+
+        log.info("pool ready", {
+            runners: RUNNER_IDS.length,
+            boxesPerRunner: this.boxesPerContainer * config.RUNNER_REPLICAS,
+            note: "컨테이너는 그 언어 제출이 올 때 띄웁니다",
+        });
+    }
+
+    /**
+     * 이 러너의 컨테이너가 떠 있게 한다. 처음 부를 때만 실제로 만든다.
+     * 같은 러너로 동시에 들어오면 하나만 만들고 나머지는 그 결과를 기다린다.
+     */
+    private async ensureRunner(runner: RunnerId): Promise<void> {
+        if (this.slots.has(runner)) return;
+
+        const inFlight = this.starting.get(runner);
+        if (inFlight) return inFlight;
+
+        const p = (async () => {
+            const slots: ContainerSlot[] = [];
+            for (let r = 0; r < config.RUNNER_REPLICAS; r++) {
+                slots.push(await this.ensureContainer(runner, `${runner}-${r}`));
+            }
+            this.slots.set(runner, slots);
+            this.unavailable.delete(runner);
+            log.info("runner started", { runner, containers: slots.length });
+        })()
+            .catch((e) => {
                 const msg = e instanceof Error ? e.message : String(e);
                 this.unavailable.set(runner, msg);
                 log.error("runner unavailable", { runner, err: msg });
-            }
-        }
+                throw e;
+            })
+            .finally(() => this.starting.delete(runner));
 
-        if (this.slots.size === 0) {
-            throw new Error(
-                `러너를 하나도 띄우지 못했습니다. 'npm run runners:build' 와 'npm run smoke:judge' 를 먼저 돌리세요.\n` +
-                    [...this.unavailable].map(([r, m]) => `  ${r}: ${m}`).join("\n"),
-            );
-        }
-        if (this.unavailable.size > 0) {
-            log.warn("일부 언어는 채점할 수 없습니다", { runners: [...this.unavailable.keys()] });
-        }
+        this.starting.set(runner, p);
+        return p;
     }
 
     /** 붙을 수 있는 docker 엔드포인트를 찾는다. 못 찾으면 어디를 시도했는지 알려준다 */
@@ -150,8 +172,8 @@ export class RunnerPool {
         );
     }
 
-    /** 채점 가능한 러너 목록. 헬스체크나 진단에 쓴다 */
-    availableRunners(): RunnerId[] {
+    /** 지금 컨테이너가 떠 있는 러너. 아직 안 쓴 언어는 여기 없다 */
+    startedRunners(): RunnerId[] {
         return [...this.slots.keys()];
     }
 
@@ -160,8 +182,9 @@ export class RunnerPool {
      * 태그(latest)가 아니라 다이제스트를 보는 이유는 같은 태그로 내용이 바뀌기 때문이다.
      */
     async describeEnvironment(): Promise<{ runnerImages: string; isolateVersion: string }> {
+        // 등록된 언어 전부를 본다. 지연 기동이라 아직 안 뜬 러너도 이미지는 있다
         const images: string[] = [];
-        for (const runner of [...this.slots.keys()].sort()) {
+        for (const runner of [...RUNNER_IDS].sort()) {
             const tag = `${config.RUNNER_IMAGE_PREFIX}-${runner}:latest`;
             try {
                 const info = await this.docker.getImage(tag).inspect();
@@ -172,9 +195,16 @@ export class RunnerPool {
             }
         }
 
+        /**
+         * isolate 버전은 컨테이너 안에서만 물을 수 있다. 지연 기동이라 기동 직후에는
+         * 뜬 컨테이너가 없으므로 하나를 띄워서 묻는다. 어차피 첫 제출 때 필요하다.
+         */
         let isolateVersion = "";
-        const firstSlots = [...this.slots.values()][0];
-        const slot = firstSlots?.[0];
+        const first = RUNNER_IDS[0];
+        if (first) {
+            await this.ensureRunner(first).catch(() => {});
+        }
+        const slot = [...this.slots.values()][0]?.[0];
         if (slot) {
             try {
                 const r = await this.execOnce(
@@ -245,16 +275,21 @@ export class RunnerPool {
         return { key, runner, container, hostBoxRoot };
     }
 
-    /** 박스 하나를 빌린다. 없으면 반납될 때까지 기다린다 */
+    /** 박스 하나를 빌린다. 컨테이너가 아직 없으면 여기서 띄운다 */
     async acquire(runner: RunnerId): Promise<Box> {
         const pool = this.free.get(runner);
-        if (!pool) {
-            const why = this.unavailable.get(runner);
-            // 여기서 던진 메시지가 제출의 judge_error 에 그대로 들어간다. 운영자가 읽을 문장이어야 한다
+        if (!pool) throw new Error(`알 수 없는 러너: ${runner}`);
+
+        try {
+            await this.ensureRunner(runner);
+        } catch (e) {
+            // 여기서 던진 메시지가 제출의 judge_error 에 그대로 들어간다.
+            // 운영자가 읽고 바로 조치할 수 있는 문장이어야 한다
+            const why = this.unavailable.get(runner) ?? (e instanceof Error ? e.message : String(e));
             throw new Error(
-                why
-                    ? `${runner} 러너를 쓸 수 없습니다: ${why}`
-                    : `알 수 없는 러너: ${runner}`,
+                `${runner} 러너를 쓸 수 없습니다: ${why}
+` +
+                    `  이미지가 없으면 'npm run runners:build' 를 돌리세요.`,
             );
         }
         const box = pool.pop();

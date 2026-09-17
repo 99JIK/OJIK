@@ -15,7 +15,7 @@
         "dev:web": "npm -w @ojik/web run dev",
         "build": "npm -ws --if-present run build",
         "typecheck": "npm -ws --if-present run typecheck",
-        "test": "node --import tsx --test tests/*.test.ts",
+        "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
         "test:unit": "node --import tsx --test tests/checker.test.ts",
         "db:generate": "npm -w @ojik/db run generate",
         "db:migrate": "npm -w @ojik/db run migrate",
@@ -25,13 +25,20 @@
         "infra:down": "docker compose down",
         "runners:build": "tsx scripts/build-runners.ts",
         "smoke:judge": "tsx scripts/smoke-judge.ts",
+        "langs": "tsx scripts/langs.ts",
+        "e2e:submit": "tsx scripts/e2e-submit.ts",
+        "e2e:solutions": "tsx scripts/e2e-solutions.ts",
+        "e2e:teaching": "tsx scripts/e2e-teaching.ts",
+        "e2e:kinds": "tsx scripts/e2e-kinds.ts",
         "check:data": "tsx scripts/check-data.ts",
         "recount": "tsx scripts/recount.ts",
         "set-role": "tsx scripts/set-role.ts"
     },
     "devDependencies": {
-        "typescript": "^5.7.3",
+        "@types/jsdom": "^30.0.0",
+        "jsdom": "^29.1.1",
+        "prettier": "^3.4.2",
         "tsx": "^4.19.2",
-        "prettier": "^3.4.2"
+        "typescript": "^5.7.3"
     }
 }

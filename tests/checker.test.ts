@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { check } from "../apps/worker/src/checker";
+import { check } from "@ojik/core";
 import { worstVerdict, effectiveRunLimits, requireLanguage, resolveRunArgv } from "@ojik/core";
 
 const buf = (s: string) => Buffer.from(s, "utf8");

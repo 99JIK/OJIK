@@ -4,3 +4,8 @@ export * from "./roles";
 export * from "./limits";
 export * from "./collections";
 export * from "./consent";
+export * from "./solutions";
+export * from "./uploads";
+export * from "./checker";
+export * from "./problemkind";
+export * from "./roster";

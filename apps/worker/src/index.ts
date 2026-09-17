@@ -1,5 +1,5 @@
 import os from "node:os";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
     createDb,
     claimNext,
@@ -147,15 +147,39 @@ function waitForWork(timeoutMs: number): Promise<void> {
     });
 }
 
+/**
+ * 하트비트.
+ *
+ * 등록 행을 갱신하면서, 그 행이 아직 내 것인지 같이 본다.
+ *
+ * 중복 기동 검사는 기동할 때 한 번만 돈다. 그 사이 등록 행이 사라지면(운영 중 손으로
+ * 지우거나, 마이그레이션으로 테이블을 비우거나) 대기 중이던 워커들이 전부 검사를 통과해
+ * 여럿이 동시에 돌게 된다. 실제로 그렇게 됐고, 서로의 러너 컨테이너를 지우면서 채점이
+ * 404 로 떨어졌다. 등록을 한 번 받는 열쇠가 아니라 계속 쥐고 있는 임차로 바꾼다.
+ *
+ * 내 것이 아니게 됐으면 조용히 물러난다. 둘이 계속 도는 것보다 하나가 죽는 게 낫다.
+ */
 async function heartbeatLoop(): Promise<void> {
     while (true) {
         await sleep(JUDGE_HEARTBEAT_INTERVAL_MS);
         try {
             await heartbeat(db, config.WORKER_ID, [...inFlight]);
-            await db
+
+            // pid 까지 맞을 때만 갱신된다. 다른 워커가 이어받았으면 0행이 바뀐다
+            const updated = await db
                 .update(judgeWorkers)
                 .set({ lastSeenAt: new Date(), busy: inFlight.size })
-                .where(eq(judgeWorkers.id, config.WORKER_ID));
+                .where(and(eq(judgeWorkers.id, config.WORKER_ID), eq(judgeWorkers.pid, process.pid)))
+                .returning({ id: judgeWorkers.id });
+
+            if (updated.length === 0) {
+                log.error("등록이 다른 워커에게 넘어갔습니다. 물러납니다", {
+                    workerId: config.WORKER_ID,
+                    pid: process.pid,
+                });
+                // 채점 중인 것은 lease 가 끊겨 다른 워커가 회수한다
+                process.exit(1);
+            }
         } catch (e) {
             log.warn("heartbeat failed", { err: String(e) });
         }
@@ -195,7 +219,18 @@ async function ensureNotDuplicate(): Promise<void> {
     if (!existing) return;
 
     const silentMs = Date.now() - existing.lastSeenAt.getTime();
-    if (silentMs >= JUDGE_LEASE_TIMEOUT_MS) return; // 죽은 워커의 흔적이다. 이어받는다
+    if (silentMs >= JUDGE_LEASE_TIMEOUT_MS) return; // 오래 조용하다. 죽은 흔적으로 본다
+
+    /**
+     * 같은 호스트라면 그 프로세스가 살아 있는지 직접 본다.
+     *
+     * 정상 종료는 자기 행을 지우지만 강제 종료는 남긴다. 그것 때문에 재시작이
+     * 2분간 막히면 배포와 디버깅이 괴로워진다. PID 로 확인하면 바로 이어받을 수 있다.
+     */
+    if (existing.hostname === os.hostname() && existing.pid > 0 && !isProcessAlive(existing.pid)) {
+        log.warn("죽은 워커 등록을 이어받습니다", { pid: existing.pid, silentMs });
+        return;
+    }
 
     throw new Error(
         `WORKER_ID '${config.WORKER_ID}' 로 도는 워커가 이미 있습니다 ` +
@@ -212,6 +247,7 @@ async function register(): Promise<void> {
         .values({
             id: config.WORKER_ID,
             hostname: os.hostname(),
+            pid: process.pid,
             version: process.env.npm_package_version ?? "dev",
             capacity: config.WORKER_CAPACITY,
             busy: 0,
@@ -220,6 +256,7 @@ async function register(): Promise<void> {
             target: judgeWorkers.id,
             set: {
                 hostname: os.hostname(),
+                pid: process.pid,
                 capacity: config.WORKER_CAPACITY,
                 busy: 0,
                 startedAt: new Date(),
@@ -263,6 +300,17 @@ async function shutdown(code: number): Promise<void> {
     await handle.close().catch(() => {});
     log.info("stopped");
     process.exit(code);
+}
+
+/** 시그널 0 은 프로세스를 안 건드리고 존재만 본다 */
+function isProcessAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (e) {
+        // EPERM 이면 내 권한 밖의 프로세스다. 살아 있다는 뜻이므로 죽었다고 보면 안 된다
+        return (e as NodeJS.ErrnoException).code === "EPERM";
+    }
 }
 
 function sleep(ms: number): Promise<void> {

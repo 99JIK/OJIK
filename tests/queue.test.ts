@@ -4,7 +4,6 @@ import { sql } from "drizzle-orm";
 import { loadEnv } from "@ojik/core/env";
 import { MAX_JUDGE_ATTEMPTS } from "@ojik/core";
 import {
-    createDb,
     claimNext,
     heartbeat,
     reclaimStale,
@@ -13,6 +12,7 @@ import {
     submissions,
     type DbHandle,
 } from "@ojik/db";
+import { openTestDb, ensureNoLiveWorker } from "./dbsetup";
 
 /**
  * 큐 동작 테스트. 실제 Postgres 가 필요하다.
@@ -25,12 +25,11 @@ import {
 
 loadEnv();
 
-const url = process.env.DATABASE_URL;
 let h: DbHandle;
 
 before(async () => {
-    if (!url) throw new Error("DATABASE_URL 이 없습니다. npm run infra:up 후 다시 돌리세요.");
-    h = createDb(url, { max: 6 });
+    h = await openTestDb(6);
+    await ensureNoLiveWorker(h);
     // 문제 1 과 사용자 2 가 있어야 한다. 없으면 시드가 안 돌아간 것
     const [p] = await h.db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM problems`);
     const [u] = await h.db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM users`);

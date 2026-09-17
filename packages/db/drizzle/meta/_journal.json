@@ -8,6 +8,48 @@
       "when": 1789531408705,
       "tag": "0000_open_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789534385694,
+      "tag": "0001_worker_pid",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789535726245,
+      "tag": "0002_lang_expand",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789536881093,
+      "tag": "0003_solutions",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789540636939,
+      "tag": "0004_instructor_and_course_problems",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789572873102,
+      "tag": "0005_problem_kinds_and_ta",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789573116583,
+      "tag": "0006_nullable_language",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,12 @@
+ARG BASE=ojik-runner-base:latest
+FROM ${BASE}
+
+# Debian 의 pypy3 는 /usr/bin/pypy3 로 들어온다. alternatives 를 안 거치므로
+# java 처럼 심링크를 고칠 필요가 없다
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends pypy3; \
+    rm -rf /var/lib/apt/lists/*
+
+# 언어 정의가 /usr/bin/pypy3 절대경로를 쓴다. 없으면 샌드박스에서 execve 가 실패한다
+RUN test -x /usr/bin/pypy3 && pypy3 --version

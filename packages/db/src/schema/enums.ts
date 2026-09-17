@@ -5,6 +5,7 @@ import {
     VERDICTS,
     LANGUAGE_IDS,
     CHECKER_TYPES,
+    PROBLEM_KINDS,
     VISIBILITIES,
     COLLECTION_PRESETS,
     TIMINGS,
@@ -24,6 +25,7 @@ export const submissionStatusEnum = pgEnum("submission_status", SUBMISSION_STATU
 export const verdictEnum = pgEnum("verdict", VERDICTS);
 export const languageEnum = pgEnum("language", LANGUAGE_IDS);
 export const checkerTypeEnum = pgEnum("checker_type", CHECKER_TYPES);
+export const problemKindEnum = pgEnum("problem_kind", PROBLEM_KINDS);
 
 export const visibilityEnum = pgEnum("visibility", VISIBILITIES);
 export const memberRoleEnum = pgEnum("member_role", MEMBER_ROLES);

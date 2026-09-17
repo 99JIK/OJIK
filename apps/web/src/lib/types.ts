@@ -1,4 +1,4 @@
-import type { Verdict, SubmissionStatus, LanguageId } from "@ojik/core";
+import type { Verdict, SubmissionStatus, LanguageId, EditorMode, ProblemKind } from "@ojik/core";
 
 export interface PublicUser {
     id: number;
@@ -11,6 +11,9 @@ export interface PublicUser {
 
 export interface ProblemSummary {
     id: number;
+    kind: ProblemKind;
+    /** 출제자 아이디. 계정이 지워졌으면 null */
+    authorHandle: string | null;
     title: string;
     timeLimitMs: number;
     memoryLimitMb: number;
@@ -56,5 +59,5 @@ export interface LanguageOption {
     id: LanguageId;
     label: string;
     extension: string;
-    editorMode: "c" | "cpp" | "python" | "java";
+    editorMode: EditorMode;
 }

@@ -3,7 +3,7 @@
     import { onMount } from "svelte";
     import { page } from "$app/state";
     import { goto } from "$app/navigation";
-    import { session } from "$lib/session.svelte.js";
+    import { session } from "$lib/session.svelte";
 
     let { children } = $props();
     let dark = $state(false);
@@ -70,6 +70,14 @@
                 class="rounded-md px-2 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
                 aria-label="테마 전환">{dark ? "밝게" : "어둡게"}</button
             >
+
+            {#if session.canTeach}
+                <a
+                    href="/admin"
+                    class="rounded-md px-3 py-1.5 text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    class:font-semibold={active("/admin")}>{session.isStaff ? "관리" : "강의"}</a
+                >
+            {/if}
 
             {#if !session.ready}
                 <span class="text-sm text-zinc-400">...</span>
