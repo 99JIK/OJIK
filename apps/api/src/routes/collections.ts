@@ -14,6 +14,7 @@ import {
     canAssist,
     parseRoster,
     parseCourseMarkdown,
+    serializeCourseMarkdown,
     makeTempPassword,
     resultCsv,
     ROSTER_MAX_ROWS,
@@ -664,6 +665,36 @@ export const collectionRoutes = new Hono<AuthEnv>()
             });
         },
     )
+
+    /**
+     * 교재를 마크다운으로 내려받는다.
+     *
+     * 올리는 형식과 같다. 받아서 고치고 되올리는 게 교재를 손보는 제일 빠른 길이다.
+     * 화면에서 항목을 하나씩 옮기는 것보다 에디터에서 문단을 통째로 옮기는 쪽이 빠르다.
+     *
+     * 문제 본문은 안 들어간다. 여기 담기는 건 문제 번호 참조뿐이고, 문제 자체는
+     * 문제 목록에서 따로 받는다. 같이 넣으면 되올릴 때 문제가 복제된다.
+     */
+    .get("/:id{[0-9]+}/export", requireAuth, async (c) => {
+        const id = Number(c.req.param("id"));
+        await requireManage(c.get("user")!, id);
+
+        const rows = await db
+            .select()
+            .from(collectionItems)
+            .where(eq(collectionItems.collectionId, id))
+            .orderBy(asc(collectionItems.idx));
+
+        const markdown = serializeCourseMarkdown(
+            rows.map((r) =>
+                r.kind === "problem"
+                    ? { kind: "problem" as const, problemId: r.problemId! }
+                    : { kind: "text" as const, heading: r.heading, body: r.body ?? "" },
+            ),
+        );
+
+        return c.json({ markdown, items: rows.length });
+    })
 
     /**
      * 교재를 마크다운 한 장으로 올린다.

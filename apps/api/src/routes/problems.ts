@@ -3,7 +3,7 @@ import { z } from "zod";
 import { v } from "../validate";
 import { and, asc, desc, eq, ilike, sql, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, MAX_CHECKER_BYTES, atLeast, blankOut, canAssist, parseBulkProblems, BULK_MAX_PROBLEMS } from "@ojik/core";
+import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, MAX_CHECKER_BYTES, atLeast, blankOut, canAssist, parseBulkProblems, BULK_MAX_PROBLEMS, serializeBulkProblems, BULK_MAX_EXPORT_BYTES, type BulkExportSource } from "@ojik/core";
 import { problems, testcases, tags, problemTags, submissions, collections, users, enqueue } from "@ojik/db";
 import { db } from "../db";
 import { alias } from "drizzle-orm/pg-core";
@@ -564,6 +564,106 @@ export const problemRoutes = new Hono<AuthEnv>()
             return c.json({ created, errors });
         },
     )
+
+    /**
+     * 문제 여러 개를 올린 형식 그대로 내려받는다.
+     *
+     * 백업, 다른 서버로 옮기기, 한 문제를 복제해 변형 만들기가 전부 이걸로 된다.
+     * 받은 파일을 고쳐서 /import 로 바로 되올릴 수 있다.
+     *
+     * 고칠 권한이 있는 문제만 나간다. 기대 출력과 체커 소스가 통째로 들어 있어서,
+     * 남의 문제까지 주면 그 문제의 답을 주는 것과 같다. 권한이 없는 번호는 조용히
+     * 빼지 않고 skipped 로 알려 준다. 백업인 줄 알았는데 빠진 게 있으면 안 된다.
+     */
+    .get("/export", requireAuth, async (c) => {
+        const user = c.get("user")!;
+        const raw = (c.req.query("ids") ?? "").trim();
+        const ids = raw
+            .split(",")
+            .map((s) => Number(s.trim()))
+            .filter((n) => Number.isInteger(n) && n > 0);
+
+        if (ids.length === 0) throw new HTTPException(400, { message: "내려받을 문제 번호가 없습니다" });
+        if (ids.length > BULK_MAX_PROBLEMS) {
+            throw new HTTPException(413, {
+                message: `한 번에 ${BULK_MAX_PROBLEMS}개까지 받을 수 있습니다 (${ids.length}개).`,
+            });
+        }
+
+        const found = await db.select().from(problems).where(inArray(problems.id, ids));
+        const byId = new Map(found.map((p) => [p.id, p]));
+
+        const out: BulkExportSource[] = [];
+        const skipped: Array<{ id: number; why: string }> = [];
+
+        // 요청한 순서대로 내보낸다. 번호 순으로 재정렬하면 고치려고 고른 순서가 흐트러진다
+        for (const id of ids) {
+            const p = byId.get(id);
+            if (!p) {
+                skipped.push({ id, why: "없는 문제" });
+                continue;
+            }
+            if (!(await canEditProblem(user, p))) {
+                skipped.push({ id, why: "고칠 권한이 없음" });
+                continue;
+            }
+
+            const tcs = await db
+                .select()
+                .from(testcases)
+                .where(eq(testcases.problemId, id))
+                .orderBy(asc(testcases.idx));
+
+            out.push({
+                title: p.title,
+                statement: p.statement,
+                inputDesc: p.inputDesc,
+                outputDesc: p.outputDesc,
+                hint: p.hint ?? undefined,
+                timeLimitMs: p.timeLimitMs,
+                memoryLimitMb: p.memoryLimitMb,
+                kind: p.kind,
+                checkerType: p.checkerType,
+                floatEpsilon: p.floatEpsilon,
+                stopOnFirstFail: p.stopOnFirstFail,
+                isPublic: p.isPublic,
+                difficulty: p.difficulty,
+                blankTemplate: p.blankTemplate ?? undefined,
+                blankLines: p.blankLines ?? undefined,
+                blankLanguage: p.blankLanguage ?? undefined,
+                checkerSource: p.checkerSource ?? undefined,
+                checkerLanguage: p.checkerLanguage ?? undefined,
+                testcases: await Promise.all(
+                    tcs.map(async (t) => ({
+                        // 파일이 없으면 빈 문자열이다. 여기서 던지면 한 문제 때문에 전부 못 받는다
+                        input: await readTestcaseFile(id, t.idx, "in").catch(() => ""),
+                        output: await readTestcaseFile(id, t.idx, "out").catch(() => ""),
+                        isSample: t.isSample,
+                        points: t.points,
+                    })),
+                ),
+            });
+        }
+
+        const json = serializeBulkProblems(out);
+
+        /*
+         * 올리기 상한을 넘으면 거부한다.
+         *
+         * 다시 못 올리는 파일을 만들어 주는 건 백업이 아니다. 테스트케이스가 큰 문제는
+         * 몇 개만으로 넘으므로, 몇 개씩 나눠 받게 안내한다.
+         */
+        if (json.length > BULK_MAX_EXPORT_BYTES) {
+            throw new HTTPException(413, {
+                message: [
+                    `파일이 ${Math.round(json.length / 1e6)}MB 라 다시 올릴 수 없습니다.`,
+                    `올리기 상한이 ${BULK_MAX_EXPORT_BYTES / 1e6}MB 입니다. 문제를 나눠서 받으세요.`,
+                ].join(" "),
+            });
+        }
+
+        return c.json({ json, count: out.length, skipped });
+    })
 
     /**
      * 편집용 원본.

@@ -246,3 +246,107 @@ export function parseCourseMarkdown(text: string): BulkParse<CourseItem> {
 
     return { items, errors };
 }
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * 내려받기.
+ *
+ * 올린 형식 그대로 돌려준다. 받은 파일을 고쳐서 바로 다시 올릴 수 있어야 쓸모가 있다.
+ * 백업, 다른 서버로 옮기기, 한 문제를 복제해 변형 만들기가 전부 그걸로 된다.
+ *
+ * 그래서 직렬화와 해석을 한 파일에 둔다. 떨어뜨려 놓으면 한쪽에 칸을 더하고 다른 쪽을
+ * 잊는다. 왕복 테스트가 둘을 묶어 둔다.
+ *
+ * 내보낸 파일에는 기대 출력과 체커 소스가 들어 있다. 답이 그대로라 고칠 권한이 있는
+ * 사람만 받을 수 있어야 한다. 그 판단은 API 가 한다.
+ */
+
+/**
+ * 내려받기 상한.
+ *
+ * 올리기의 상한과 같은 값이다. 다시 못 올리는 파일을 만들어 주면 안 된다. 테스트케이스가
+ * 큰 문제 몇 개만으로 금방 넘으므로, 넘으면 개수를 줄여 나눠 받게 한다.
+ */
+export const BULK_MAX_EXPORT_BYTES = 4_000_000;
+
+/** DB 행과 테스트케이스를 합친 모양. API 가 이 꼴로 모아서 넘긴다 */
+export interface BulkExportSource extends BulkProblem {
+    testcases: BulkTestcase[];
+}
+
+/**
+ * 문제 하나를 내보낼 꼴로 만든다.
+ *
+ * 채점 결과를 좌우하는 칸(제한, 비교 방식, 유형, 부분점수 여부)은 기본값과 같아도 적는다.
+ * 빼면 나중에 기본값이 바뀌었을 때 되올린 문제가 조용히 달라진다. 백업으로는 못 쓴다.
+ *
+ * 비어 있고 기본값도 없는 칸(hint, 빈칸 원본, 체커)만 뺀다. 안 그러면 보통 문제 하나가
+ * null 투성이 스무 줄이 되어 손으로 고칠 수가 없다.
+ */
+export function toBulkProblem(p: BulkExportSource): BulkProblem {
+    const out: BulkProblem = {
+        title: p.title,
+        statement: p.statement ?? "",
+        inputDesc: p.inputDesc ?? "",
+        outputDesc: p.outputDesc ?? "",
+        timeLimitMs: p.timeLimitMs,
+        memoryLimitMb: p.memoryLimitMb,
+        kind: p.kind ?? "code",
+        checkerType: p.checkerType ?? "trim",
+        stopOnFirstFail: p.stopOnFirstFail ?? true,
+        isPublic: p.isPublic ?? false,
+        testcases: p.testcases,
+    };
+
+    // 실수 비교일 때만 의미가 있다. 나머지 문제에 붙어 있으면 뭘 하는 칸인지 헷갈린다
+    if (out.checkerType === "float") out.floatEpsilon = p.floatEpsilon;
+
+    if (p.hint) out.hint = p.hint;
+    if (typeof p.difficulty === "number") out.difficulty = p.difficulty;
+
+    if (p.blankTemplate) {
+        out.blankTemplate = p.blankTemplate;
+        out.blankLines = p.blankLines ?? [];
+        out.blankLanguage = p.blankLanguage;
+    }
+    if (p.checkerSource) {
+        out.checkerSource = p.checkerSource;
+        out.checkerLanguage = p.checkerLanguage;
+    }
+
+    return out;
+}
+
+/**
+ * 파일로 쓸 문자열.
+ *
+ * 들여쓰기를 준다. 한 줄짜리 JSON 은 에디터에서 열어도 고칠 수가 없고, 어차피 여기서
+ * 제일 큰 것은 테스트케이스라 들여쓰기가 용량을 좌우하지 않는다.
+ */
+export function serializeBulkProblems(list: BulkExportSource[]): string {
+    return JSON.stringify(list.map(toBulkProblem), null, 2);
+}
+
+/**
+ * 교재를 마크다운 한 장으로 되돌린다.
+ *
+ * 올리는 형식과 같다. 받아서 고치고 다시 올리는 게 교재를 손보는 제일 빠른 길이다.
+ * 화면에서 항목을 하나씩 끌어 옮기는 것보다, 에디터에서 문단을 통째로 옮기는 쪽이 낫다.
+ *
+ * 제목이 있는 덩어리는 제목 줄을 먼저 쓴다. 몇 단계였는지는 안 남아 있으므로 ## 로
+ * 적는다. 되올리면 제목과 본문의 짝은 그대로고 단계만 달라진다.
+ */
+export function serializeCourseMarkdown(items: CourseItem[]): string {
+    const out: string[] = [];
+    for (const it of items) {
+        if (it.kind === "problem") {
+            out.push(`@problem ${it.problemId}`);
+            continue;
+        }
+        if (it.heading) out.push(`## ${it.heading}`, "");
+        if (it.body) out.push(it.body, "");
+    }
+    // 끝에 개행 하나. 에디터가 마지막 줄을 다루는 방식이 제각각이라 명시해 둔다
+    return out.join("\n").replace(/\n+$/, "") + "\n";
+}

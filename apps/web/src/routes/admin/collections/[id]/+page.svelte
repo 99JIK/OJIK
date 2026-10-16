@@ -1,7 +1,7 @@
 <script lang="ts">
     import { page } from "$app/state";
-    import { get, put, patch, del } from "$lib/api";
-    import { PRESET_LABEL, type CollectionPreset } from "@ojik/core";
+    import { get, put, patch, post, del } from "$lib/api";
+    import { PRESET_LABEL, COURSE_SAMPLE, type CollectionPreset } from "@ojik/core";
     import MarkdownInput from "$lib/MarkdownInput.svelte";
     import RosterUpload from "$lib/RosterUpload.svelte";
     import type { ProblemSummary } from "$lib/types";
@@ -54,8 +54,56 @@
     let busy = $state(false);
     let loaded = $state(false);
 
+    /** 마크다운으로 갈아엎은 뒤 항목을 다시 불러오게 하는 값. 올리기가 끝나면 올린다 */
+    let reloadTick = $state(0);
+
+    let mdText = $state("");
+    let mdBusy = $state(false);
+    let mdResult = $state<{ items: number; problems: number; errors: string[] } | null>(null);
+
+    async function downloadCourse() {
+        try {
+            const r = await get<{ markdown: string }>(`/collections/${id}/export`);
+            const url = URL.createObjectURL(new Blob([r.markdown], { type: "text/markdown;charset=utf-8" }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${slug || "교재"}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        }
+    }
+
+    async function pickMd(ev: Event) {
+        const f = (ev.target as HTMLInputElement).files?.[0];
+        if (!f) return;
+        mdText = await f.text();
+        mdResult = null;
+    }
+
+    async function importCourse() {
+        if (!mdText.trim()) return;
+        if (!confirm(`지금 항목 ${items.length}개를 지우고 파일 내용으로 바꿉니다. 계속할까요?`)) return;
+        mdBusy = true;
+        try {
+            mdResult = await post<{ items: number; problems: number; errors: string[] }>(
+                `/collections/${id}/import`,
+                { markdown: mdText },
+            );
+            error = null;
+            // 갈아엎은 결과가 화면에 안 보이면 올라갔는지 알 수 없다
+            reloadTick++;
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            mdBusy = false;
+        }
+    }
+
     $effect(() => {
         const cid = id;
+        void reloadTick;
         void (async () => {
             try {
                 // 상세는 slug 로만 조회된다. 목록에서 이 id 의 slug 를 찾는다
@@ -385,6 +433,74 @@
             -->
             <span class="text-xs text-zinc-400">저장을 눌러야 반영됩니다.</span>
         </div>
+    </section>
+
+    <section class="mt-8 border-t border-zinc-200 pt-6 dark:border-zinc-800">
+        <div class="mb-2 flex flex-wrap items-baseline justify-between gap-3">
+            <h3 class="font-medium">마크다운으로 올리기</h3>
+            <div class="flex items-center gap-3 text-xs">
+                <button class="text-zinc-500 hover:underline" onclick={downloadCourse}>내려받기</button>
+                <button class="text-zinc-500 hover:underline" onclick={() => (mdText = COURSE_SAMPLE)}>
+                    예시 넣기
+                </button>
+            </div>
+        </div>
+        <p class="mb-3 text-sm text-zinc-500">
+            설명 사이에 <code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">@problem 12</code> 줄을 끼우면
+            그 자리에 문제가 들어갑니다. 제목 줄(#, ##)은 뒤에 오는 설명의 소제목이 됩니다.
+            받아서 고친 뒤 되올리는 게 제일 빠릅니다.
+        </p>
+
+        <!--
+            전체 교체라는 걸 누르기 전에 말한다. 뒤에 붙이는 방식으로 두면 두 번 올렸을 때
+            내용이 두 배가 되는데 그게 더 흔한 사고라 교체로 뒀다. 그러면 경고는 필수다.
+        -->
+        <p class="mb-3 rounded-md bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            올리면 지금 항목 {items.length}개가 전부 지워지고 파일 내용으로 바뀝니다.
+            먼저 내려받아 두세요.
+        </p>
+
+        <textarea
+            bind:value={mdText}
+            rows="10"
+            spellcheck="false"
+            placeholder={COURSE_SAMPLE}
+            class="ojik-input w-full resize-y font-mono text-xs"
+        ></textarea>
+
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+            <input
+                type="file"
+                accept=".md,.markdown,text/markdown,text/plain"
+                onchange={pickMd}
+                class="text-xs text-zinc-500 file:mr-2 file:rounded file:border file:border-zinc-300 file:bg-transparent file:px-2 file:py-1 file:text-xs dark:file:border-zinc-700"
+            />
+            <button
+                class="ojik-btn ojik-btn-primary"
+                disabled={mdBusy || !mdText.trim()}
+                onclick={importCourse}
+            >
+                {mdBusy ? "올리는 중..." : "올리고 교체"}
+            </button>
+        </div>
+
+        {#if mdResult}
+            <div class="mt-3 space-y-2 text-sm">
+                <p class="rounded-md bg-green-50 px-4 py-2 text-green-800 dark:bg-green-950 dark:text-green-200">
+                    항목 {mdResult.items}개 (문제 {mdResult.problems}개) 로 바꿨습니다.
+                </p>
+                {#if mdResult.errors.length > 0}
+                    <div class="rounded-md bg-red-50 px-4 py-2 text-red-700 dark:bg-red-950 dark:text-red-300">
+                        <p class="font-medium">{mdResult.errors.length}줄을 건너뛰었습니다.</p>
+                        <ul class="mt-1 space-y-0.5 text-xs">
+                            {#each mdResult.errors as e (e)}
+                                <li>{e}</li>
+                            {/each}
+                        </ul>
+                    </div>
+                {/if}
+            </div>
+        {/if}
     </section>
 
     <section class="mt-8 border-t border-zinc-200 pt-6 dark:border-zinc-800">

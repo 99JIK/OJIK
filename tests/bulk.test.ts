@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseBulkProblems, parseCourseMarkdown, BULK_PROBLEM_SAMPLE, COURSE_SAMPLE } from "@ojik/core";
+import {
+    parseBulkProblems,
+    parseCourseMarkdown,
+    serializeBulkProblems,
+    serializeCourseMarkdown,
+    toBulkProblem,
+    BULK_PROBLEM_SAMPLE,
+    COURSE_SAMPLE,
+    type BulkExportSource,
+    type CourseItem,
+} from "@ojik/core";
 
 /**
  * 밖에서 만든 파일을 읽는 부분.
@@ -118,4 +128,132 @@ test("코드 블록 안의 문장은 그대로 남는다", () => {
     const r = parseCourseMarkdown(md);
     assert.equal(r.items.length, 1);
     assert.match((r.items[0] as { body: string }).body, /int main/);
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * 왕복.
+ *
+ * 내려받은 파일을 그대로 다시 올릴 수 있어야 한다. 이게 깨지면 백업이 백업이 아니다.
+ * 직렬화와 해석 중 한쪽에만 칸을 더하는 실수를 여기서 잡는다.
+ */
+
+const FULL: BulkExportSource = {
+    title: "경로 아무거나",
+    statement: "최단 경로를 아무거나 하나 출력하세요.",
+    inputDesc: "정점 수와 간선",
+    outputDesc: "경로",
+    hint: "BFS",
+    timeLimitMs: 3000,
+    memoryLimitMb: 512,
+    kind: "code",
+    checkerType: "special",
+    stopOnFirstFail: false,
+    isPublic: true,
+    difficulty: 7,
+    checkerSource: "int main(){return 0;}",
+    checkerLanguage: "c17",
+    testcases: [
+        { input: "1 2\n", output: "3\n", isSample: true, points: 0 },
+        { input: "5 7\n", output: "12\n", isSample: false, points: 40 },
+    ],
+};
+
+test("내보낸 것을 그대로 다시 읽는다", () => {
+    const r = parseBulkProblems(serializeBulkProblems([FULL]));
+    assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+
+    const got = r.items[0]!;
+    for (const k of [
+        "title",
+        "statement",
+        "inputDesc",
+        "outputDesc",
+        "hint",
+        "timeLimitMs",
+        "memoryLimitMb",
+        "kind",
+        "checkerType",
+        "stopOnFirstFail",
+        "isPublic",
+        "difficulty",
+        "checkerSource",
+        "checkerLanguage",
+    ] as const) {
+        assert.deepEqual(got[k], FULL[k], `${k} 가 왕복에서 달라짐`);
+    }
+    assert.deepEqual(got.testcases, FULL.testcases);
+});
+
+test("빈칸 문제도 왕복한다", () => {
+    const src: BulkExportSource = {
+        title: "빈칸",
+        timeLimitMs: 1000,
+        memoryLimitMb: 256,
+        kind: "blank",
+        blankTemplate: "a = 1\nb = 2\nprint(a + b)\n",
+        blankLines: [2],
+        blankLanguage: "python3",
+        testcases: [{ input: "", output: "3\n", isSample: false, points: 0 }],
+    };
+    const got = parseBulkProblems(serializeBulkProblems([src])).items[0]!;
+    assert.equal(got.blankTemplate, src.blankTemplate);
+    assert.deepEqual(got.blankLines, [2]);
+    assert.equal(got.blankLanguage, "python3");
+});
+
+test("채점을 좌우하는 칸은 기본값이어도 남는다", () => {
+    // 나중에 기본값이 바뀌면 되올린 문제가 조용히 달라진다. 백업으로 쓸 수 없게 된다
+    const bare = toBulkProblem({
+        title: "최소",
+        timeLimitMs: 1000,
+        memoryLimitMb: 256,
+        testcases: [],
+    });
+    assert.equal(bare.timeLimitMs, 1000);
+    assert.equal(bare.memoryLimitMb, 256);
+    assert.equal(bare.checkerType, "trim");
+    assert.equal(bare.stopOnFirstFail, true);
+    assert.equal(bare.kind, "code");
+});
+
+test("안 쓰는 칸은 안 적는다", () => {
+    const bare = toBulkProblem({ title: "최소", timeLimitMs: 1000, memoryLimitMb: 256, testcases: [] });
+    assert.ok(!("hint" in bare), "hint 가 비었는데 적힘");
+    assert.ok(!("blankTemplate" in bare), "빈칸 원본이 없는데 적힘");
+    assert.ok(!("checkerSource" in bare), "체커가 없는데 적힘");
+    // epsilon 은 실수 비교에서만 뜻이 있다
+    assert.ok(!("floatEpsilon" in bare), "float 가 아닌데 epsilon 이 적힘");
+});
+
+test("실수 비교면 epsilon 을 남긴다", () => {
+    const p = toBulkProblem({
+        title: "실수",
+        timeLimitMs: 1000,
+        memoryLimitMb: 256,
+        checkerType: "float",
+        floatEpsilon: 1e-3,
+        testcases: [],
+    });
+    assert.equal(p.floatEpsilon, 1e-3);
+});
+
+test("교재가 왕복한다", () => {
+    const src: CourseItem[] = [
+        { kind: "text", heading: "1주차", body: "표준 입출력을 다룹니다." },
+        { kind: "problem", problemId: 1 },
+        { kind: "problem", problemId: 2 },
+        { kind: "text", heading: "조금 더", body: "여러 줄 입력." },
+        { kind: "problem", problemId: 5 },
+    ];
+    const r = parseCourseMarkdown(serializeCourseMarkdown(src));
+    assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+    assert.deepEqual(r.items, src);
+});
+
+test("제목만 있는 항목도 왕복한다", () => {
+    const src: CourseItem[] = [{ kind: "text", heading: "쉬는 주", body: "" }];
+    const r = parseCourseMarkdown(serializeCourseMarkdown(src));
+    assert.deepEqual(r.items, src);
 });
