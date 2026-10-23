@@ -4,10 +4,19 @@
     import { session } from "$lib/session.svelte";
     import { meta, queue } from "$lib/meta.svelte";
     import { verdictClass, verdictText, formatMemory, formatTime, formatDate } from "$lib/format";
+    import { VERDICTS, VERDICT_LABEL, type Verdict } from "@ojik/core";
     import type { SubmissionRow } from "$lib/types";
 
     const problemId = $derived(page.url.searchParams.get("problemId") ?? "");
     const handle = $derived(page.url.searchParams.get("handle") ?? "");
+
+    /**
+     * 판정으로 거르기.
+     *
+     * 운영에서 제일 자주 쓰는 건 "채점 오류만 모아서 전부 다시" 다. 워커나 러너를 고친 뒤에
+     * 반드시 하는 일인데, 번호를 하나씩 찾아 누르는 것 말고는 방법이 없었다.
+     */
+    let verdict = $state<Verdict | "">("");
 
     let rows = $state<SubmissionRow[]>([]);
     let error = $state<string | null>(null);
@@ -18,6 +27,7 @@
             const r = await get<{ submissions: SubmissionRow[] }>("/submissions", {
                 problemId,
                 handle,
+                verdict,
                 limit: 50,
             });
             rows = r.submissions;
@@ -38,6 +48,7 @@
     $effect(() => {
         void problemId;
         void handle;
+        void verdict;
         void load();
     });
 
@@ -56,6 +67,52 @@
     async function rejudge(id: number) {
         await post(`/submissions/${id}/rejudge`);
         void load();
+    }
+
+    /* 고른 제출. 다시 불러와도 선택이 남게 Set 으로 둔다 */
+    let picked = $state<Set<number>>(new Set());
+    let busy = $state(false);
+
+    function toggle(id: number) {
+        const next = new Set(picked);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        picked = next;
+    }
+
+    const allShown = $derived(rows.length > 0 && rows.every((r) => picked.has(r.id)));
+    function toggleAll() {
+        const next = new Set(picked);
+        if (allShown) for (const r of rows) next.delete(r.id);
+        else for (const r of rows) next.add(r.id);
+        picked = next;
+    }
+
+    /**
+     * 고른 것을 한 번에 다시 채점한다.
+     *
+     * 판정으로 걸러 놓고 전체선택을 누르는 흐름을 전제로 한다. 채점기를 고친 뒤
+     * 오류난 제출 수십 건을 되살리는 게 이 버튼을 만든 이유다.
+     */
+    async function rejudgePicked() {
+        const ids = [...picked];
+        if (ids.length === 0) return;
+        if (!confirm(`${ids.length}건을 다시 채점합니다. 계속할까요?`)) return;
+        busy = true;
+        try {
+            const r = await post<{ requeued: number }>("/submissions/rejudge", { ids });
+            picked = new Set();
+            error = null;
+            await load();
+            if (r.requeued !== ids.length) {
+                // 그 사이 지워진 제출이 있으면 수가 안 맞는다. 조용히 넘기지 않는다
+                error = `${ids.length}건 중 ${r.requeued}건만 큐에 들어갔습니다. 나머지는 사라진 제출입니다.`;
+            }
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            busy = false;
+        }
     }
 </script>
 
@@ -81,6 +138,26 @@
     </div>
 </div>
 
+<div class="mt-4 flex flex-wrap items-center gap-3 text-sm">
+    <select bind:value={verdict} class="ojik-input w-44">
+        <option value="">판정 전체</option>
+        {#each VERDICTS as v (v)}
+            <option value={v}>{VERDICT_LABEL[v]}</option>
+        {/each}
+    </select>
+
+    {#if session.isStaff}
+        <button class="ojik-btn" disabled={busy || picked.size === 0} onclick={rejudgePicked}>
+            {busy ? "보내는 중..." : `고른 것 재채점${picked.size > 0 ? ` (${picked.size})` : ""}`}
+        </button>
+        {#if picked.size > 0}
+            <button class="text-xs text-zinc-500 hover:underline" onclick={() => (picked = new Set())}>
+                선택 해제
+            </button>
+        {/if}
+    {/if}
+</div>
+
 {#if error}
     <p class="mt-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">{error}</p>
 {:else if !loaded}
@@ -90,6 +167,16 @@
         <table class="ojik-table w-full min-w-[720px] text-sm">
             <thead class="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
                 <tr>
+                    {#if session.isStaff}
+                        <th class="w-8">
+                            <input
+                                type="checkbox"
+                                checked={allShown}
+                                onchange={toggleAll}
+                                aria-label="보이는 제출 전체 선택"
+                            />
+                        </th>
+                    {/if}
                     <th class="nowrap w-20 font-medium">번호</th>
                     <th class="nowrap w-28 font-medium">아이디</th>
                     <th class="font-medium">문제</th>
@@ -104,6 +191,16 @@
             <tbody>
                 {#each rows as r (r.id)}
                     <tr class="border-b border-zinc-100 dark:border-zinc-900">
+                        {#if session.isStaff}
+                            <td>
+                                <input
+                                    type="checkbox"
+                                    checked={picked.has(r.id)}
+                                    onchange={() => toggle(r.id)}
+                                    aria-label="{r.id}번 선택"
+                                />
+                            </td>
+                        {/if}
                         <td class="nowrap tabular-nums text-zinc-500">
                             <a href="/submission/{r.id}" class="hover:underline">{r.id}</a>
                         </td>
@@ -132,7 +229,12 @@
                         {/if}
                     </tr>
                 {:else}
-                    <tr><td colspan="9" class="py-8 text-center text-zinc-400">제출이 없습니다</td></tr>
+                    <tr>
+                        <!-- 운영자는 체크박스와 재채점 열이 더 붙는다 -->
+                        <td colspan={session.isStaff ? 10 : 8} class="py-8 text-center text-zinc-400">
+                            제출이 없습니다
+                        </td>
+                    </tr>
                 {/each}
             </tbody>
         </table>

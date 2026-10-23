@@ -1,6 +1,6 @@
 <script lang="ts">
     import { page } from "$app/state";
-    import { get } from "$lib/api";
+    import { get, post } from "$lib/api";
     import { session } from "$lib/session.svelte";
     import { meta } from "$lib/meta.svelte";
     import { verdictClass, verdictText, formatMemory, formatTime, formatDate } from "$lib/format";
@@ -88,6 +88,28 @@
         const t = setInterval(load, 1000);
         return () => clearInterval(t);
     });
+
+    let busy = $state(false);
+
+    /**
+     * 이 제출만 다시 채점한다.
+     *
+     * 채점 오류를 고친 뒤 여기서 바로 눌러 보는 게 자연스럽다. 목록으로 돌아가 같은 줄을
+     * 다시 찾게 하면 어느 것이었는지 놓친다.
+     *
+     * 다시 큐에 들어가면 status 가 queued 가 되고 위 폴링이 알아서 결과를 받아 온다.
+     */
+    async function rejudge() {
+        busy = true;
+        try {
+            await post(`/submissions/${id}/rejudge`);
+            await load();
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            busy = false;
+        }
+    }
 </script>
 
 {#if error}
@@ -98,9 +120,20 @@
     {@const s = data.submission}
     <div class="flex items-baseline justify-between">
         <h1 class="text-xl font-bold">제출 {s.id}</h1>
-        <a href="/problem/{s.problemId}" class="text-sm text-blue-600 hover:underline dark:text-blue-400">
-            문제 {s.problemId}
-        </a>
+        <div class="flex items-baseline gap-4 text-sm">
+            {#if session.isStaff}
+                <button
+                    onclick={rejudge}
+                    disabled={busy || pending}
+                    class="text-blue-600 hover:underline disabled:text-zinc-400 disabled:no-underline dark:text-blue-400"
+                >
+                    {pending ? "채점 중" : busy ? "보내는 중..." : "재채점"}
+                </button>
+            {/if}
+            <a href="/problem/{s.problemId}" class="text-blue-600 hover:underline dark:text-blue-400">
+                문제 {s.problemId}
+            </a>
+        </div>
     </div>
 
     <div

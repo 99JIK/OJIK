@@ -117,6 +117,24 @@
     // svelte-ignore state_referenced_locally
     let loaded = $state(problemId === null);
 
+    /** 테스트케이스를 저장한 직후에만 뜬다. 그때가 재채점이 필요한 거의 유일한 순간이다 */
+    let offerRejudge = $state(false);
+
+    async function rejudgeAll() {
+        if (problemId === null) return;
+        if (!confirm("이 문제의 모든 제출을 새 테스트케이스로 다시 채점합니다. 계속할까요?")) return;
+        busy = true;
+        try {
+            const r = await post<{ requeued: number }>(`/problems/${problemId}/rejudge`);
+            notice = `${r.requeued}건을 큐에 넣었습니다. 채점 현황에서 진행을 봅니다.`;
+            offerRejudge = false;
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            busy = false;
+        }
+    }
+
     /**
      * 소속으로 고를 수 있는 강의.
      *
@@ -309,7 +327,15 @@
                 { testcases },
             );
             savedCount = r.count;
-            notice = `테스트케이스 ${r.count}개를 저장했습니다 (버전 ${r.testcaseVersion}). 기존 제출을 다시 채점하려면 목록에서 재채점을 누르세요.`;
+            notice = `테스트케이스 ${r.count}개를 저장했습니다 (버전 ${r.testcaseVersion}).`;
+            /*
+             * 재채점 버튼을 여기 띄운다.
+             *
+             * 전에는 "목록에서 재채점을 누르세요" 라고만 적어 뒀다. 테스트케이스를 고친
+             * 직후가 재채점이 필요한 거의 유일한 순간인데, 그때 다른 화면으로 보내면
+             * 그냥 안 누른다. 그러면 옛 기준으로 매겨진 판정이 그대로 남는다.
+             */
+            offerRejudge = true;
         } catch (e) {
             error = e instanceof Error ? e.message : String(e);
         } finally {
@@ -322,9 +348,25 @@
     <p class="text-sm text-zinc-500">불러오는 중...</p>
 {:else}
     {#if notice}
-        <p class="mb-4 rounded-md bg-green-50 px-4 py-3 text-sm text-green-800 dark:bg-green-950 dark:text-green-200">
-            {notice}
-        </p>
+        <div
+            class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md bg-green-50 px-4 py-3 text-sm text-green-800 dark:bg-green-950 dark:text-green-200"
+        >
+            <span>{notice}</span>
+            {#if offerRejudge}
+                <span class="flex items-center gap-3">
+                    <span class="text-xs text-green-700/80 dark:text-green-300/80">
+                        기존 제출은 옛 기준의 판정을 들고 있습니다.
+                    </span>
+                    <button
+                        onclick={rejudgeAll}
+                        disabled={busy}
+                        class="rounded-md bg-green-700 px-3 py-1 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-50"
+                    >
+                        전부 재채점
+                    </button>
+                </span>
+            {/if}
+        </div>
     {/if}
     {#if error}
         <p class="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
