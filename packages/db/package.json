@@ -17,7 +17,8 @@
     "dependencies": {
         "@ojik/core": "*",
         "drizzle-orm": "^0.38.3",
-        "postgres": "^3.4.5"
+        "postgres": "^3.4.5",
+        "tsx": "^4.19.2"
     },
     "devDependencies": {
         "drizzle-kit": "^0.30.1"

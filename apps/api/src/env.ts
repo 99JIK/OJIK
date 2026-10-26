@@ -7,6 +7,17 @@ const Schema = z.object({
     DATABASE_URL: z.string().min(1),
     PORT: z.coerce.number().int().positive().default(3000),
 
+    /*
+     * 들을 주소.
+     *
+     * 기본이 0.0.0.0 이라 공인 IP 가 붙은 서버에서는 API 가 그대로 바깥에 열린다.
+     * nginx 뒤에 둘 때는 127.0.0.1 로 묶어야 한다. 그러면 역프록시를 건너뛴 직접 접속이
+     * 아예 불가능해져서, CORS 설정이 틀려도 그게 구멍이 되지 않는다.
+     *
+     * 개발에서는 0.0.0.0 이 편하다. WSL2 안에서 띄우고 Windows 브라우저로 보는 경우가 있다.
+     */
+    HOST: z.string().default("0.0.0.0"),
+
     /** 토큰 서명 키. 운영에서 기본값이 남아 있으면 누구나 관리자 토큰을 만들 수 있다 */
     JWT_SECRET: z.string().min(32),
     /** 액세스 토큰 수명(초) */

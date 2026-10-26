@@ -1,0 +1,49 @@
+# 운영용 Postgres.
+#
+# 개발용(docker-compose.yml)과 나눠 둔다. 개발 파일을 그대로 서버에 올리는 게 제일 흔한
+# 사고다. 거기엔 비밀번호가 oj 로 박혀 있고 포트가 0.0.0.0 에 열린다.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# POSTGRES_PASSWORD 를 .env 에 넣어야 뜬다. 기본값을 안 둔 건 일부러다. 기본값이 있으면
+# 그걸 그대로 쓰고, 그게 비밀번호가 oj 인 것과 같은 결과가 된다.
+
+services:
+    db:
+        image: postgres:17-alpine
+        container_name: ojik-db
+        restart: unless-stopped
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER 를 .env 에 넣으세요}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 넣으세요}
+            POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB 를 .env 에 넣으세요}
+            POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+        ports:
+            # 루프백에만 연다.
+            #
+            # 개발 파일처럼 "55432:5432" 로 두면 0.0.0.0 에 붙는다. 그리고 도커의 포트
+            # 퍼블리싱은 iptables 에 직접 들어가서 UFW 를 우회한다. 방화벽을 켜 뒀으니
+            # 괜찮겠지 하면 공인 IP 에 Postgres 가 그대로 열린 상태가 된다.
+            #
+            # api 와 워커는 같은 호스트에서 도니 루프백이면 충분하다. 다른 호스트에서
+            # 붙어야 한다면 포트를 여는 게 아니라 SSH 터널이나 사설망을 쓴다.
+            - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+        volumes:
+            - pgdata:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+            interval: 10s
+            timeout: 3s
+            retries: 10
+        # 로그가 디스크를 채우는 걸 막는다. 기본은 무한이다
+        logging:
+            driver: json-file
+            options:
+                max-size: "10m"
+                max-file: "3"
+
+volumes:
+    pgdata:
+        # 이름을 고정한다. 프로젝트 이름(디렉터리명)이 바뀌면 볼륨이 갈라져서
+        # "데이터가 사라졌다" 로 보인다. 실제로는 빈 볼륨을 새로 만든 것이다
+        name: ojik-pgdata

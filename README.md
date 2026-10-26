@@ -81,6 +81,7 @@ flowchart LR
 | [`docs/judge-pipeline.md`](docs/judge-pipeline.md) | 큐 설계, 상주 러너 풀, 보안 경계, 판정 규칙 |
 | [`docs/schema.md`](docs/schema.md) | 테이블 구조와 인덱스 설계 근거 |
 | [`docs/development.md`](docs/development.md) | 로컬 실행, 흔한 문제 |
+| [`docs/operations.md`](docs/operations.md) | 서버에 올리고 계속 돌리기. 설치, 배포, 백업, 증상별 확인 |
 | [`docs/koj-differences.md`](docs/koj-differences.md) | 참고한 KOJ에서 무엇을 왜 바꿨는지 |
 
 ---
@@ -139,6 +140,9 @@ npm run dev:api           # :3000
 npm run dev:web           # :5173
 npm run dev:worker
 ```
+
+서버에 올려서 계속 돌리는 쪽은 [`docs/operations.md`](docs/operations.md)를 봅니다.
+systemd 유닛과 nginx 설정, 백업 스크립트는 [`deploy/`](deploy/)에 있습니다.
 
 ### 명령
 
@@ -324,6 +328,15 @@ GitHub의 릴리스 목록이 비어 보입니다.
 태그는 **주석 태그**(`-a`)로 만듭니다. 가벼운 태그는 작성자와 날짜가 안 남습니다.
 
 ### 다음 (미출시)
+
+- 서버 배포 한 벌. systemd 유닛 둘, nginx 설정, 운영용 compose, 백업과 복구 스크립트,
+  `docs/operations.md`. 전에는 개발 서버를 띄우는 방법만 있었다
+- API 에 `HOST` 를 둔다. 기본이 0.0.0.0 이라 공인 IP 가 붙은 서버에서 역프록시를 건너뛴
+  직접 접속이 가능했다. nginx 뒤에서는 127.0.0.1 로 묶는다
+- 운영용 compose 를 따로 둔다. 개발용은 비밀번호가 oj 로 박혀 있고 포트가 0.0.0.0 에
+  열린다. 도커의 포트 퍼블리싱은 UFW 를 우회하므로 방화벽을 켜 둬도 소용이 없다
+- `tsx` 를 api, worker, db 의 운영 의존성으로 옮긴다. 루트 devDependency 라
+  `npm ci --omit=dev` 를 하면 `npm start` 가 안 됐다
 
 - 재채점을 필요한 자리마다 붙였다. 전에는 문제 목록에만 있었다. 제출 상세에서 한 건,
   테스트케이스를 저장한 직후 그 화면에서 문제 전체, 채점 현황에서 판정으로 거른 뒤 골라서
