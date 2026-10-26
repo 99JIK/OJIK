@@ -20,7 +20,10 @@ RUN set -eux; \
     for bin in java javac; do \
         ln -sf "$(readlink -f "/usr/bin/$bin")" "/usr/bin/$bin"; \
     done; \
-    J=/usr/lib/jvm/java-21-openjdk-amd64; \
+    # JDK 경로에 아키텍처가 들어간다 (amd64, arm64). 박아 두면 다른 아키텍처에서
+    # find 가 빈 디렉터리를 돌고, 링크가 안 고쳐진 채로 이미지가 만들어진다.
+    # 빌드는 통과하고 첫 자바 제출에서 깨진다. javac 실파일에서 거슬러 올라가 찾는다
+    J="$(dirname "$(dirname "$(readlink -f /usr/bin/javac)")")";     test -d "$J/conf" || { echo "JDK 경로를 못 찾음: $J"; exit 1; }; \
     find "$J" -type l | while read -r link; do \
         # 끊어진 링크(src.zip)에서 readlink 가 실패한다. set -e 에 걸리지 않게 받아 낸다
         target="$(readlink -f "$link" 2>/dev/null || true)"; \
