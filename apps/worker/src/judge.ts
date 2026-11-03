@@ -272,8 +272,11 @@ async function runOne(
     checker: PreparedChecker | null,
 ): Promise<TcOutcome> {
     // 이 테스트케이스 하나만 박스에 넣는다. 제출 단위로 TC 전체를 복사하는 KOJ 와의 차이.
-    // BOX_ROOT 가 tmpfs 면 이 복사는 메모리 안에서 끝난다
-    await fs.copyFile(path.join(tcDir, `${tc.idx}.in`), path.join(box.hostDir, "stdin"));
+    // BOX_ROOT 가 tmpfs 면 이 복사는 메모리 안에서 끝난다.
+    // 앞 케이스의 stdin 은 --run 이 끝나며 root 소유가 돼서 덮어쓸 수 없다. 지우고 새로 만든다
+    const stdinPath = path.join(box.hostDir, "stdin");
+    await fs.rm(stdinPath, { force: true });
+    await fs.copyFile(path.join(tcDir, `${tc.idx}.in`), stdinPath);
 
     // 앞 케이스 출력이 남아 있으면 이번 실행이 실패했을 때 그걸 정답과 비교하게 된다
     await fs.rm(path.join(box.hostDir, "stdout"), { force: true });

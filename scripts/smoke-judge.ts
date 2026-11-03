@@ -40,6 +40,23 @@ const bad = (m: string, detail = "") => {
 const x = (args: string[], input?: string) =>
     docker(["exec", ...(input !== undefined ? ["-i"] : []), name, ...args], input !== undefined ? { input } : {});
 
+/**
+ * entrypoint 의 준비 끝 줄을 로그에서 기다린다. 문제가 없으면 null, 있으면 사유.
+ * 워커(pool.ts)와 같은 규칙이다. cgroup 위임 도중에 exec 하면 위임이 실패해 컨테이너가 죽는다
+ */
+async function waitReady(c: string): Promise<string | null> {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+        const st = await docker(["inspect", "-f", "{{.State.Running}}", c]);
+        const lg = await docker(["logs", c]);
+        const text = lg.stdout + lg.stderr;
+        if (st.stdout.trim() !== "true") return `컨테이너가 기동 직후 종료됨\n${text}`;
+        if (text.includes("[ojik-runner] ready")) return null;
+        if (Date.now() > deadline) return `15초 안에 준비 신호가 없음\n${text}`;
+        await new Promise((r) => setTimeout(r, 100));
+    }
+}
+
 /** 박스 안 파일 읽기. 없으면 빈 문자열 */
 const boxRead = async (p: string) => (await x(["cat", `/var/local/lib/isolate/${BOX}/${p}`])).stdout;
 
@@ -66,6 +83,11 @@ async function main() {
     ]);
     if (up.code !== 0) {
         console.error(`컨테이너 기동 실패:\n${up.stderr || up.stdout}`);
+        process.exit(1);
+    }
+    const notReady = await waitReady(name);
+    if (notReady) {
+        console.error(`컨테이너 준비 실패: ${notReady}`);
         process.exit(1);
     }
     ok(`컨테이너 기동 (${image})`);
@@ -240,8 +262,10 @@ async function allLanguagesCheck() {
             "run", "-d", "--name", cname, "--privileged", "--network", "none",
             image, "sleep", "infinity",
         ]);
-        if (up.code !== 0) {
-            bad(`${lang.label}: 컨테이너 기동 실패`, up.stderr || up.stdout);
+        const notReady = up.code === 0 ? await waitReady(cname) : up.stderr || up.stdout;
+        if (notReady) {
+            bad(`${lang.label}: 컨테이너 기동 실패`, notReady);
+            await removeContainer(cname);
             continue;
         }
 
@@ -357,6 +381,8 @@ async function uidIsolationCheck() {
     ] as const) {
         await removeContainer(n);
         await docker(["run", "-d", "--name", n, "--privileged", "--network", "none", img, "sleep", "infinity"]);
+        const notReady = await waitReady(n);
+        if (notReady) bad(`uid 격리 확인용 컨테이너 ${n} 기동 실패`, notReady);
     }
     const pe = (a: string[], i?: string) =>
         docker(["exec", ...(i !== undefined ? ["-i"] : []), py, ...a], i !== undefined ? { input: i } : {});
@@ -445,6 +471,7 @@ async function bindMountCheck() {
     }
     const hostDir = path.join(boxRoot, "smoke");
     await fs.mkdir(hostDir, { recursive: true });
+    await fs.chmod(hostDir, 0o700);
 
     const bName = `${name}-bind`;
     await removeContainer(bName);
@@ -462,8 +489,10 @@ async function bindMountCheck() {
         "sleep",
         "infinity",
     ]);
-    if (up.code !== 0) {
-        bad("bind mount 컨테이너 기동 실패", up.stderr || up.stdout);
+    const notReady = up.code === 0 ? await waitReady(bName) : up.stderr || up.stdout;
+    if (notReady) {
+        bad("bind mount 컨테이너 기동 실패", notReady);
+        await removeContainer(bName);
         return;
     }
 
@@ -479,6 +508,14 @@ async function bindMountCheck() {
         return;
     }
     ok("bind mount 위에서 --init 동작");
+
+    // 워커와 같은 순서. --init 이 root 소유 0700 으로 만든 박스를 호스트 워커에게 연다
+    const open = await bx(isolate.openBoxArgs(init.stdout.trim()));
+    if (open.code !== 0) {
+        bad("박스 권한 열기 실패", open.stderr || open.stdout);
+        await removeContainer(bName);
+        return;
+    }
 
     // 워커는 소스를 호스트에서 직접 쓴다
     const srcPath = path.join(hostDir, String(BOX), "box", "probe.txt");

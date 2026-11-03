@@ -31,6 +31,23 @@ export function initArgs(boxId: number): string[] {
     return ["--cg", `--box-id=${boxId}`, "--init"];
 }
 
+/**
+ * --init 이 만든 박스 디렉터리를 워커가 호스트에서 읽고 쓸 수 있게 연다.
+ *
+ * isolate 는 박스를 호출한 사용자 소유 0700 으로 만든다. 컨테이너 안 호출자는 root 라서
+ * 호스트의 워커(일반 사용자)는 소스를 넣지도 결과를 읽지도 못한다. Docker Desktop 은 bind
+ * mount 에 소유권이 없어서 안 드러나고 리눅스 네이티브 Docker 에서만 전 제출이 채점 오류가 된다.
+ *
+ * --as-uid 로 소유자를 바꾸면 --run 이 "Cannot switch UID and GID" 로 거부된다. 그룹을 주는
+ * 방법은 --run 이 끝날 때 isolate 가 그룹을 root 로 되돌려서 안 된다. 모드는 그대로 남으므로
+ * 0777 로 연다. 다른 호스트 사용자는 그 위의 박스 루트(워커 소유 0700)에서 막힌다.
+ *
+ * @param boxPath --init 이 출력한 박스 경로 (컨테이너 기준)
+ */
+export function openBoxArgs(boxPath: string): string[] {
+    return ["chmod", "0777", `${boxPath}/box`];
+}
+
 export function cleanupArgs(boxId: number): string[] {
     return ["--cg", `--box-id=${boxId}`, "--cleanup"];
 }
