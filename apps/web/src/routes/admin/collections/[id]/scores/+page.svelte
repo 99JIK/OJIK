@@ -17,6 +17,8 @@
         idx: number;
         title: string;
         kind: ProblemKind;
+        /** 항목별 마감. 없으면 마감 없음 */
+        dueAt: string | null;
     }
     interface Member {
         userId: number;
@@ -30,6 +32,7 @@
         best: number;
         tries: number;
         solved: boolean;
+        firstSolvedAt: string | null;
     }
 
     const id = $derived(Number(page.params.id));
@@ -63,6 +66,19 @@
     const byKey = $derived(new Map(cells.map((c) => [`${c.userId}:${c.problemId}`, c])));
     const cellOf = (u: number, p: number | null) => (p === null ? undefined : byKey.get(`${u}:${p}`));
 
+    /**
+     * 마감을 넘겨 푼 것인지.
+     *
+     * 제출은 막지 않으므로 늦어도 맞힘으로 들어온다. 감점은 강사가 정할 일이고,
+     * 여기서는 누가 늦었는지만 보여 준다.
+     */
+    function isLate(u: number, it: Item): boolean {
+        if (!it.dueAt) return false;
+        const c = cellOf(u, it.problemId);
+        if (!c?.firstSolvedAt) return false;
+        return new Date(c.firstSolvedAt).getTime() > new Date(it.dueAt).getTime();
+    }
+
     const totals = $derived(
         new Map(
             members.map((m) => [
@@ -94,7 +110,9 @@
                 ...items.map((it) => {
                     const c = cellOf(m.userId, it.problemId);
                     // 안 낸 칸은 빈칸으로 둔다. 0 으로 적으면 "내고 0점" 과 구분이 안 된다
-                    return c ? String(c.best) : "";
+                    if (!c) return "";
+                    // 지각은 별표. 엑셀에서 걸러 보기 쉽게 숫자 뒤에 붙인다
+                    return isLate(m.userId, it) ? `${c.best}*` : String(c.best);
                 }),
                 String(totals.get(m.userId) ?? 0),
                 `${solvedCounts.get(m.userId) ?? 0}/${items.length}`,
@@ -148,7 +166,12 @@
                         <th class="px-2 py-2 text-center font-medium">
                             <span class="block max-w-24 truncate" title={it.title}>{it.title}</span>
                             {#if it.kind !== "code"}
-                                <span class="text-xs font-normal text-zinc-400">{PROBLEM_KIND_LABEL[it.kind]}</span>
+                                <span class="block text-xs font-normal text-zinc-400">{PROBLEM_KIND_LABEL[it.kind]}</span>
+                            {/if}
+                            {#if it.dueAt}
+                                <span class="block text-xs font-normal text-zinc-400">
+                                    ~{new Date(it.dueAt).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })}
+                                </span>
                             {/if}
                         </th>
                     {/each}
@@ -174,7 +197,14 @@
                                     <!-- 안 낸 칸. 0 으로 적으면 "내고 0점" 과 구분이 안 된다 -->
                                     <span class="text-zinc-300 dark:text-zinc-700">·</span>
                                 {:else if c.solved}
-                                    <span class="text-green-600 dark:text-green-400">{c.best}</span>
+                                    <span
+                                        class={isLate(m.userId, it)
+                                            ? "text-blue-600 dark:text-blue-400"
+                                            : "text-green-600 dark:text-green-400"}
+                                        title={isLate(m.userId, it) ? "마감 후 제출" : ""}
+                                    >
+                                        {c.best}{isLate(m.userId, it) ? "*" : ""}
+                                    </span>
                                 {:else}
                                     <span class="text-amber-600 dark:text-amber-400" title="{c.tries}번 냄">
                                         {c.best}
@@ -198,5 +228,7 @@
         <span class="text-green-600 dark:text-green-400">초록</span>은 맞힘,
         <span class="text-amber-600 dark:text-amber-400">주황</span>은 냈지만 못 맞힘,
         <span class="text-zinc-400">·</span>은 안 냄입니다.
+        <span class="text-blue-600 dark:text-blue-400">파랑</span>과 별표는 마감 후 제출입니다.
+        감점은 하지 않으니 필요하면 직접 정하세요.
     </p>
 {/if}

@@ -53,8 +53,12 @@ app.onError((err, c) => {
 
 app.notFound((c) => c.json({ error: "없는 경로입니다" }, 404));
 
-const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
-    console.log(`api listening on :${info.port}`);
+const server = serve({ fetch: app.fetch, port: env.PORT, hostname: env.HOST }, (info) => {
+    console.log(`api listening on ${env.HOST}:${info.port}`);
+    if (env.HOST === "0.0.0.0") {
+        // 운영에서 이걸 놓치면 API 가 역프록시를 건너뛰고 바깥에 그대로 열린다
+        console.log("  모든 인터페이스에 열려 있습니다. nginx 뒤라면 HOST=127.0.0.1 로 두세요.");
+    }
 });
 
 // 종료 신호를 받으면 받던 요청을 마치고 DB 커넥션을 정리한다

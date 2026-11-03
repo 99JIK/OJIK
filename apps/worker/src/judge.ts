@@ -25,6 +25,7 @@ import {
     type Testcase,
 } from "@ojik/db";
 import { config } from "./config";
+import { prepareChecker, runChecker, CheckerError, type PreparedChecker } from "./specialjudge";
 import { log } from "./log";
 import { RunnerPool, type Box } from "./pool";
 import * as isolate from "./isolate";
@@ -86,6 +87,7 @@ export async function judge(
 
     const boxCount = Math.min(config.WORKER_TC_PARALLEL, tcs.length);
     const boxes: Box[] = [];
+    let checkerBox: Box | null = null;
     try {
         for (let i = 0; i < boxCount; i++) boxes.push(await pool.acquire(lang.runner));
 
@@ -101,7 +103,32 @@ export async function judge(
             await copyArtifacts(boxes[0]!, boxes[i]!, lang);
         }
 
-        const outcomes = await runTestcases(db, pool, boxes, lang, sub, problem, tcs);
+        /*
+         * 스페셜 저지면 체커를 따로 컴파일한다.
+         *
+         * 박스를 하나 더 잡는 이유는 이름 충돌이다. 컴파일 argv 가 lang.sourceName 에
+         * 박혀 있어서 같은 박스에 두면 학생 소스와 체커 소스가 서로 덮어쓴다.
+         *
+         * 체커 박스는 하나만 잡는다. 케이스 병렬 실행과 겹치지만, 체커 실행은 파일을
+         * 쓰고 바로 읽는 짧은 일이라 아래에서 한 번에 하나씩 돌린다.
+         */
+        let checker: PreparedChecker | null = null;
+        if (problem.checkerType === "special") {
+            if (!problem.checkerSource || !problem.checkerLanguage) {
+                throw new JudgeError("스페셜 저지 문제인데 체커가 없습니다");
+            }
+            const checkerLang = requireLanguage(problem.checkerLanguage);
+            checkerBox = await pool.acquire(checkerLang.runner);
+            checker = await prepareChecker(
+                pool,
+                checkerBox,
+                problem.checkerSource,
+                problem.checkerLanguage,
+                compile,
+            );
+        }
+
+        const outcomes = await runTestcases(db, pool, boxes, lang, sub, problem, tcs, checker);
         const verdict = worstVerdict(outcomes.map((o) => o.verdict));
         await finalize(db, sub, problem, verdict, outcomes, null, null, judgeEnvId);
 
@@ -113,6 +140,7 @@ export async function judge(
         });
     } finally {
         for (const b of boxes) await pool.release(b);
+        if (checkerBox) await pool.release(checkerBox);
     }
 }
 
@@ -188,6 +216,8 @@ async function runTestcases(
     sub: Submission,
     problem: Problem,
     tcs: Testcase[],
+    /** 스페셜 저지가 아니면 null */
+    checker: PreparedChecker | null,
 ): Promise<TcOutcome[]> {
     const limits = effectiveRunLimits(lang, problem.timeLimitMs, problem.memoryLimitMb);
     const argv = resolveRunArgv(lang, problem.memoryLimitMb);
@@ -205,7 +235,7 @@ async function runTestcases(
             if (i >= tcs.length) return;
             const tc = tcs[i]!;
 
-            const o = await runOne(pool, box, lang, argv, limits, problem, tcDir, tc);
+            const o = await runOne(pool, box, lang, argv, limits, problem, tcDir, tc, checker);
             outcomes.push(o);
             judged++;
 
@@ -239,6 +269,7 @@ async function runOne(
     problem: Problem,
     tcDir: string,
     tc: Testcase,
+    checker: PreparedChecker | null,
 ): Promise<TcOutcome> {
     // 이 테스트케이스 하나만 박스에 넣는다. 제출 단위로 TC 전체를 복사하는 KOJ 와의 차이.
     // BOX_ROOT 가 tmpfs 면 이 복사는 메모리 안에서 끝난다
@@ -299,12 +330,32 @@ async function runOne(
         return { ...base, verdict: "output_limit_exceeded", stdout: null };
     }
     const expected = await fs.readFile(path.join(tcDir, `${tc.idx}.out`));
-    const res = check(problem.checkerType, actual, expected, problem.floatEpsilon);
+
+    /*
+     * 비교.
+     *
+     * 스페셜 저지는 체커 프로그램이 판정한다. 체커가 규약을 벗어나면 CheckerError 가
+     * 올라오는데, 그걸 JudgeError 로 바꿔 채점 오류로 만든다. 학생 코드는 멀쩡한데
+     * 출제자가 체커를 잘못 쓴 것이라 오답으로 떨어뜨리면 안 된다.
+     */
+    let ok: boolean;
+    if (checker) {
+        const input = await fs.readFile(path.join(tcDir, `${tc.idx}.in`));
+        try {
+            const r = await runChecker(pool, checker, { input, expected, actual }, problem.memoryLimitMb);
+            ok = r.ok;
+        } catch (e) {
+            if (e instanceof CheckerError) throw new JudgeError(e.message);
+            throw e;
+        }
+    } else {
+        ok = check(problem.checkerType, actual, expected, problem.floatEpsilon).ok;
+    }
 
     return {
         ...base,
-        verdict: res.ok ? "accepted" : "wrong_answer",
-        points: res.ok ? tc.points : 0,
+        verdict: ok ? "accepted" : "wrong_answer",
+        points: ok ? tc.points : 0,
         stdout: keepOutput ? snippet(actual.toString("utf8")) : null,
     };
 }

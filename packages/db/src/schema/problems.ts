@@ -23,6 +23,18 @@ export const problems = pgTable(
         /** checkerType 이 float 일 때만 의미 있음. 상대/절대 오차 허용치 */
         floatEpsilon: doublePrecision().notNull().default(1e-6),
 
+        /**
+         * checkerType 이 special 일 때의 체커 프로그램.
+         *
+         * 답이 여러 개인 문제(아무 최단 경로나, 조건을 만족하는 아무 배치나)는 문자열
+         * 비교로 채점이 안 된다. 출제자가 판정 프로그램을 쓰고, 워커가 그걸 샌드박스에서
+         * 돌린다. 규약은 packages/core/src/checker.ts 의 CHECKER_EXIT 참고.
+         *
+         * 학생에게 절대 안 내려간다. 체커를 보면 어떤 답이 통과하는지 알 수 있다.
+         */
+        checkerSource: text(),
+        checkerLanguage: languageEnum(),
+
         /** 첫 오답에서 남은 테스트케이스를 중단할지. BOJ 기본 동작.
          *  대회 부분점수 문제는 false 로 둬야 점수가 나온다 */
         stopOnFirstFail: boolean().notNull().default(true),

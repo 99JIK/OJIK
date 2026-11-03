@@ -3,7 +3,7 @@ import { z } from "zod";
 import { v } from "../validate";
 import { and, asc, desc, eq, ilike, sql, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, atLeast, blankOut, canAssist } from "@ojik/core";
+import { PROBLEM_LIMITS, CHECKER_TYPES, PROBLEM_KINDS, LANGUAGE_IDS, MAX_CHECKER_BYTES, atLeast, blankOut, canAssist, parseBulkProblems, BULK_MAX_PROBLEMS, serializeBulkProblems, BULK_MAX_EXPORT_BYTES, type BulkExportSource } from "@ojik/core";
 import { problems, testcases, tags, problemTags, submissions, collections, users, enqueue } from "@ojik/db";
 import { db } from "../db";
 import { alias } from "drizzle-orm/pg-core";
@@ -46,6 +46,10 @@ const ProblemBody = z.object({
     blankTemplate: z.string().nullable().optional(),
     blankLines: z.array(z.number().int().positive()).nullable().optional(),
     blankLanguage: z.enum(LANGUAGE_IDS).nullable().optional(),
+
+    /** checkerType 이 special 일 때의 체커 프로그램 */
+    checkerSource: z.string().max(MAX_CHECKER_BYTES).nullable().optional(),
+    checkerLanguage: z.enum(LANGUAGE_IDS).nullable().optional(),
 });
 
 const TestcaseBody = z.object({
@@ -108,13 +112,14 @@ async function loadEditable(user: User, id: number): Promise<Problem> {
 /**
  * 문제 행에서 답이 드러나는 칸을 지운다.
  *
- * blankTemplate 은 빈칸의 정답이 그대로 든 원본이다. 문제 상세는 로그인만 하면 누구나
- * 부르는 곳이라, 행을 통째로 내보내면 빈칸 답이 같이 나간다. 편집 화면은 이 함수를 안 거치는
- * 다른 라우트에서 받아 간다.
+ * blankTemplate 은 빈칸의 정답이 그대로 든 원본이고, checkerSource 는 어떤 답이 통과하는지를
+ * 코드로 적어 둔 것이다. 문제 상세는 로그인만 하면 누구나 부르는 곳이라, 행을 통째로
+ * 내보내면 둘 다 같이 나간다. 편집 화면은 이 함수를 안 거치는 /source 라우트로 받아 간다.
  */
-function stripAnswers(p: Problem): Omit<Problem, "blankTemplate"> {
-    const { blankTemplate: _drop, ...rest } = p;
-    void _drop;
+function stripAnswers(p: Problem): Omit<Problem, "blankTemplate" | "checkerSource"> {
+    const { blankTemplate: _t, checkerSource: _c, ...rest } = p;
+    void _t;
+    void _c;
     return rest;
 }
 
@@ -124,13 +129,36 @@ function stripAnswers(p: Problem): Omit<Problem, "blankTemplate"> {
  * 빈칸 문제를 원본 없이 저장할 수 있으면, 학생이 제출할 때가 되어서야 409 를 본다.
  * 만들 때 막는 게 낫다.
  */
-function assertKindFields(f: { kind?: string; blankTemplate?: string | null; blankLanguage?: string | null }): void {
-    if (f.kind !== "blank") return;
-    if (!f.blankTemplate?.trim()) {
-        throw new HTTPException(400, { message: "빈칸 문제는 원본 코드가 있어야 합니다" });
+function assertKindFields(f: {
+    kind?: string;
+    blankTemplate?: string | null;
+    blankLanguage?: string | null;
+    checkerType?: string;
+    checkerSource?: string | null;
+    checkerLanguage?: string | null;
+}): void {
+    if (f.kind === "blank") {
+        if (!f.blankTemplate?.trim()) {
+            throw new HTTPException(400, { message: "빈칸 문제는 원본 코드가 있어야 합니다" });
+        }
+        if (!f.blankLanguage) {
+            throw new HTTPException(400, { message: "빈칸 문제는 채점 언어를 정해야 합니다" });
+        }
     }
-    if (!f.blankLanguage) {
-        throw new HTTPException(400, { message: "빈칸 문제는 채점 언어를 정해야 합니다" });
+
+    /*
+     * 스페셜 저지인데 체커가 없으면 저장 못 하게 막는다.
+     *
+     * 안 막으면 학생이 제출할 때가 되어서야 채점 오류가 난다. 그때는 이미 여러 명이
+     * 제출한 뒤일 수 있다.
+     */
+    if (f.checkerType === "special") {
+        if (!f.checkerSource?.trim()) {
+            throw new HTTPException(400, { message: "스페셜 저지는 체커 프로그램이 있어야 합니다" });
+        }
+        if (!f.checkerLanguage) {
+            throw new HTTPException(400, { message: "스페셜 저지는 체커 언어를 정해야 합니다" });
+        }
     }
 }
 
@@ -326,7 +354,18 @@ export const problemRoutes = new Hono<AuthEnv>()
             .where(eq(problemTags.problemId, id));
 
         const [count] = await db
-            .select({ n: sql<number>`count(*)::int` })
+            .select({
+                n: sql<number>`count(*)::int`,
+                /*
+                 * 부분점수 문제인지.
+                 *
+                 * 케이스에 배점이 붙어 있으면 부분점수다. 따로 플래그를 두지 않는 건,
+                 * 플래그와 실제 배점이 어긋나는 상태를 만들지 않기 위해서다.
+                 * 배점이 전부 0 이면 워커가 통과 개수 비율로 환산한다
+                 */
+                partial: sql<boolean>`bool_or(${testcases.points} > 0)`,
+                totalPoints: sql<number>`coalesce(sum(${testcases.points}), 0)::int`,
+            })
             .from(testcases)
             .where(eq(testcases.problemId, id));
 
@@ -338,6 +377,8 @@ export const problemRoutes = new Hono<AuthEnv>()
             blank,
             tags: tagRows,
             testcaseCount: count?.n ?? 0,
+            partialScoring: count?.partial ?? false,
+            totalPoints: count?.totalPoints ?? 0,
             canSubmit: access.canSubmit,
         });
     })
@@ -413,6 +454,218 @@ export const problemRoutes = new Hono<AuthEnv>()
     })
 
     /**
+     * 문제 여러 개를 한 번에 올린다.
+     *
+     * 화면에서 하나씩 등록하는 건 다섯 개만 넘어가도 못 할 짓이다. 출제자는 보통 자기
+     * 에디터에서 문제를 쓰고 테스트케이스를 스크립트로 만든다. 그걸 그대로 올릴 수 있어야 한다.
+     *
+     * 문제 하나씩 트랜잭션을 연다. 50개를 한 덩어리로 묶으면 하나가 어긋났을 때 전부
+     * 되돌아간다. 되는 것은 넣고 안 되는 것만 알려 준다. 명단 올리기와 같은 규칙이다.
+     */
+    .post(
+        "/import",
+        requireRole("instructor"),
+        v(
+            "json",
+            z.object({
+                json: z.string().min(1).max(4_000_000),
+                ownerCollectionId: z.number().int().positive().nullable().optional(),
+            }),
+        ),
+        async (c) => {
+            const user = c.get("user")!;
+            const { json, ownerCollectionId = null } = c.req.valid("json");
+
+            await assertCanCreate(user, ownerCollectionId);
+
+            const parsed = parseBulkProblems(json);
+            if (parsed.items.length > BULK_MAX_PROBLEMS) {
+                throw new HTTPException(413, {
+                    message: `한 번에 ${BULK_MAX_PROBLEMS}개까지 올릴 수 있습니다 (${parsed.items.length}개).`,
+                });
+            }
+
+            const created: Array<{ id: number; title: string; testcases: number }> = [];
+            const errors = [...parsed.errors];
+
+            for (const p of parsed.items) {
+                try {
+                    // 유형에 필요한 칸이 비면 여기서 걸린다. 학생이 제출할 때 터지는 것보다 낫다
+                    assertKindFields({
+                        kind: p.kind,
+                        blankTemplate: p.blankTemplate,
+                        blankLanguage: p.blankLanguage,
+                        checkerType: p.checkerType,
+                        checkerSource: p.checkerSource,
+                        checkerLanguage: p.checkerLanguage,
+                    });
+
+                    const row = await db.transaction(async (tx) => {
+                        const [inserted] = await tx
+                            .insert(problems)
+                            .values({
+                                title: p.title,
+                                statement: p.statement ?? "",
+                                inputDesc: p.inputDesc ?? "",
+                                outputDesc: p.outputDesc ?? "",
+                                hint: p.hint ?? null,
+                                timeLimitMs: p.timeLimitMs ?? PROBLEM_LIMITS.timeMs.default,
+                                memoryLimitMb: p.memoryLimitMb ?? PROBLEM_LIMITS.memoryMb.default,
+                                kind: p.kind ?? "code",
+                                checkerType: p.checkerType ?? "trim",
+                                floatEpsilon: p.floatEpsilon ?? 1e-6,
+                                stopOnFirstFail: p.stopOnFirstFail ?? true,
+                                isPublic: p.isPublic ?? false,
+                                difficulty: p.difficulty ?? null,
+                                blankTemplate: p.blankTemplate ?? null,
+                                blankLines: p.blankLines ?? null,
+                                blankLanguage: (p.blankLanguage as never) ?? null,
+                                checkerSource: p.checkerSource ?? null,
+                                checkerLanguage: (p.checkerLanguage as never) ?? null,
+                                ownerCollectionId,
+                                createdBy: user.id,
+                            })
+                            .returning();
+                        return inserted!;
+                    });
+
+                    /*
+                     * 테스트케이스는 파일로 나간다.
+                     *
+                     * 해시와 크기를 여기서 다시 계산하지 않는다. writeTestcaseFile 이 개행을
+                     * LF 로 바꾼 뒤의 값을 돌려주는데, 원문으로 계산하면 파일과 DB 가 어긋난다.
+                     * check-data 가 그걸 불일치로 잡는다.
+                     */
+                    const tcs = p.testcases ?? [];
+                    const rows = [];
+                    for (const [i, tc] of tcs.entries()) {
+                        const inf = await writeTestcaseFile(row.id, i, "in", tc.input);
+                        const outf = await writeTestcaseFile(row.id, i, "out", tc.output);
+                        rows.push({
+                            problemId: row.id,
+                            idx: i,
+                            isSample: tc.isSample ?? false,
+                            points: tc.points ?? 0,
+                            inputSha256: inf.sha256,
+                            inputBytes: inf.bytes,
+                            outputSha256: outf.sha256,
+                            outputBytes: outf.bytes,
+                        });
+                    }
+                    if (rows.length > 0) await db.insert(testcases).values(rows);
+
+                    created.push({ id: row.id, title: row.title, testcases: tcs.length });
+                } catch (e) {
+                    const why = e instanceof HTTPException ? e.message : e instanceof Error ? e.message : String(e);
+                    errors.push(`${p.title}: ${why}`);
+                }
+            }
+
+            return c.json({ created, errors });
+        },
+    )
+
+    /**
+     * 문제 여러 개를 올린 형식 그대로 내려받는다.
+     *
+     * 백업, 다른 서버로 옮기기, 한 문제를 복제해 변형 만들기가 전부 이걸로 된다.
+     * 받은 파일을 고쳐서 /import 로 바로 되올릴 수 있다.
+     *
+     * 고칠 권한이 있는 문제만 나간다. 기대 출력과 체커 소스가 통째로 들어 있어서,
+     * 남의 문제까지 주면 그 문제의 답을 주는 것과 같다. 권한이 없는 번호는 조용히
+     * 빼지 않고 skipped 로 알려 준다. 백업인 줄 알았는데 빠진 게 있으면 안 된다.
+     */
+    .get("/export", requireAuth, async (c) => {
+        const user = c.get("user")!;
+        const raw = (c.req.query("ids") ?? "").trim();
+        const ids = raw
+            .split(",")
+            .map((s) => Number(s.trim()))
+            .filter((n) => Number.isInteger(n) && n > 0);
+
+        if (ids.length === 0) throw new HTTPException(400, { message: "내려받을 문제 번호가 없습니다" });
+        if (ids.length > BULK_MAX_PROBLEMS) {
+            throw new HTTPException(413, {
+                message: `한 번에 ${BULK_MAX_PROBLEMS}개까지 받을 수 있습니다 (${ids.length}개).`,
+            });
+        }
+
+        const found = await db.select().from(problems).where(inArray(problems.id, ids));
+        const byId = new Map(found.map((p) => [p.id, p]));
+
+        const out: BulkExportSource[] = [];
+        const skipped: Array<{ id: number; why: string }> = [];
+
+        // 요청한 순서대로 내보낸다. 번호 순으로 재정렬하면 고치려고 고른 순서가 흐트러진다
+        for (const id of ids) {
+            const p = byId.get(id);
+            if (!p) {
+                skipped.push({ id, why: "없는 문제" });
+                continue;
+            }
+            if (!(await canEditProblem(user, p))) {
+                skipped.push({ id, why: "고칠 권한이 없음" });
+                continue;
+            }
+
+            const tcs = await db
+                .select()
+                .from(testcases)
+                .where(eq(testcases.problemId, id))
+                .orderBy(asc(testcases.idx));
+
+            out.push({
+                title: p.title,
+                statement: p.statement,
+                inputDesc: p.inputDesc,
+                outputDesc: p.outputDesc,
+                hint: p.hint ?? undefined,
+                timeLimitMs: p.timeLimitMs,
+                memoryLimitMb: p.memoryLimitMb,
+                kind: p.kind,
+                checkerType: p.checkerType,
+                floatEpsilon: p.floatEpsilon,
+                stopOnFirstFail: p.stopOnFirstFail,
+                isPublic: p.isPublic,
+                difficulty: p.difficulty,
+                blankTemplate: p.blankTemplate ?? undefined,
+                blankLines: p.blankLines ?? undefined,
+                blankLanguage: p.blankLanguage ?? undefined,
+                checkerSource: p.checkerSource ?? undefined,
+                checkerLanguage: p.checkerLanguage ?? undefined,
+                testcases: await Promise.all(
+                    tcs.map(async (t) => ({
+                        // 파일이 없으면 빈 문자열이다. 여기서 던지면 한 문제 때문에 전부 못 받는다
+                        input: await readTestcaseFile(id, t.idx, "in").catch(() => ""),
+                        output: await readTestcaseFile(id, t.idx, "out").catch(() => ""),
+                        isSample: t.isSample,
+                        points: t.points,
+                    })),
+                ),
+            });
+        }
+
+        const json = serializeBulkProblems(out);
+
+        /*
+         * 올리기 상한을 넘으면 거부한다.
+         *
+         * 다시 못 올리는 파일을 만들어 주는 건 백업이 아니다. 테스트케이스가 큰 문제는
+         * 몇 개만으로 넘으므로, 몇 개씩 나눠 받게 안내한다.
+         */
+        if (json.length > BULK_MAX_EXPORT_BYTES) {
+            throw new HTTPException(413, {
+                message: [
+                    `파일이 ${Math.round(json.length / 1e6)}MB 라 다시 올릴 수 없습니다.`,
+                    `올리기 상한이 ${BULK_MAX_EXPORT_BYTES / 1e6}MB 입니다. 문제를 나눠서 받으세요.`,
+                ].join(" "),
+            });
+        }
+
+        return c.json({ json, count: out.length, skipped });
+    })
+
+    /**
      * 편집용 원본.
      *
      * 문제 상세는 빈칸의 원본 코드를 안 내보낸다. 정답이 그대로 들어 있어서다.
@@ -426,6 +679,8 @@ export const problemRoutes = new Hono<AuthEnv>()
             blankTemplate: p.blankTemplate,
             blankLines: p.blankLines,
             blankLanguage: p.blankLanguage,
+            checkerSource: p.checkerSource,
+            checkerLanguage: p.checkerLanguage,
         });
     })
 

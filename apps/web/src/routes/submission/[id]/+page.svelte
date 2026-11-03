@@ -1,6 +1,6 @@
 <script lang="ts">
     import { page } from "$app/state";
-    import { get } from "$lib/api";
+    import { get, post } from "$lib/api";
     import { session } from "$lib/session.svelte";
     import { meta } from "$lib/meta.svelte";
     import { verdictClass, verdictText, formatMemory, formatTime, formatDate } from "$lib/format";
@@ -88,6 +88,28 @@
         const t = setInterval(load, 1000);
         return () => clearInterval(t);
     });
+
+    let busy = $state(false);
+
+    /**
+     * 이 제출만 다시 채점한다.
+     *
+     * 채점 오류를 고친 뒤 여기서 바로 눌러 보는 게 자연스럽다. 목록으로 돌아가 같은 줄을
+     * 다시 찾게 하면 어느 것이었는지 놓친다.
+     *
+     * 다시 큐에 들어가면 status 가 queued 가 되고 위 폴링이 알아서 결과를 받아 온다.
+     */
+    async function rejudge() {
+        busy = true;
+        try {
+            await post(`/submissions/${id}/rejudge`);
+            await load();
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
+        } finally {
+            busy = false;
+        }
+    }
 </script>
 
 {#if error}
@@ -98,9 +120,20 @@
     {@const s = data.submission}
     <div class="flex items-baseline justify-between">
         <h1 class="text-xl font-bold">제출 {s.id}</h1>
-        <a href="/problem/{s.problemId}" class="text-sm text-blue-600 hover:underline dark:text-blue-400">
-            문제 {s.problemId}
-        </a>
+        <div class="flex items-baseline gap-4 text-sm">
+            {#if session.isStaff}
+                <button
+                    onclick={rejudge}
+                    disabled={busy || pending}
+                    class="text-blue-600 hover:underline disabled:text-zinc-400 disabled:no-underline dark:text-blue-400"
+                >
+                    {pending ? "채점 중" : busy ? "보내는 중..." : "재채점"}
+                </button>
+            {/if}
+            <a href="/problem/{s.problemId}" class="text-blue-600 hover:underline dark:text-blue-400">
+                문제 {s.problemId}
+            </a>
+        </div>
     </div>
 
     <div
@@ -117,6 +150,17 @@
             <span class="text-zinc-500">{PROBLEM_KIND_LABEL[data.problemKind]}</span>
         {/if}
         <span class="text-zinc-500">{formatDate(s.createdAt)}</span>
+
+        <!--
+            부분점수.
+
+            맞았는지만 보여 주면 70점을 받았는지 0점을 받았는지 알 수가 없다. 채점기는
+            전부터 케이스별 배점으로 점수를 냈는데 화면에 나오는 곳이 없었다.
+            전부 맞힌 제출에는 안 띄운다. 만점인 게 당연해서 자리만 차지한다
+        -->
+        {#if !data.verdictHidden && s.verdict !== "accepted" && s.score > 0}
+            <span class="font-medium text-amber-600 dark:text-amber-400">{s.score}점</span>
+        {/if}
     </div>
 
     {#if data.verdictHidden}
@@ -169,13 +213,25 @@
     {/if}
 
     {#if data.results.length > 0}
+        <!-- {@const} 는 블록의 바로 아래 자식이어야 한다. section 안에는 못 둔다 -->
+        {@const earned = data.results.reduce((a, r) => a + (r.verdict === "accepted" ? r.points : 0), 0)}
+        {@const offered = data.results.reduce((a, r) => a + r.points, 0)}
         <section class="mt-6">
-            <h2 class="mb-2 text-sm font-semibold">테스트케이스</h2>
+            <div class="mb-2 flex items-baseline justify-between gap-3">
+                <h2 class="text-sm font-semibold">테스트케이스</h2>
+                <!-- 배점이 붙은 문제에서만. 전부 0 이면 통과 개수 비율로 환산되므로 뜻이 없다 -->
+                {#if offered > 0}
+                    <span class="text-xs text-zinc-400">배점 {earned} / {offered}</span>
+                {/if}
+            </div>
+
             <div class="flex flex-wrap gap-1">
                 {#each data.results as r (r.idx)}
                     {@const ok = r.verdict === "accepted"}
                     <span
-                        title="{r.idx + 1}번: {VERDICT_LABEL[r.verdict]} / {r.timeMs}ms / {formatMemory(r.memoryKb)}"
+                        title="{r.idx + 1}번: {VERDICT_LABEL[r.verdict]} / {r.timeMs}ms / {formatMemory(
+                            r.memoryKb,
+                        )}{r.points > 0 ? ` / ${r.points}점` : ''}"
                         class="rounded px-2 py-1 text-xs tabular-nums {ok
                             ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
                             : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'}">{r.idx + 1}</span

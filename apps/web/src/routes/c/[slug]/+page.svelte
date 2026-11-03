@@ -3,7 +3,13 @@
     import { get, post } from "$lib/api";
     import { session } from "$lib/session.svelte";
     import { formatDate } from "$lib/format";
-    import { PRESET_LABEL, SCORING_LABEL, type CollectionPreset } from "@ojik/core";
+    import {
+        PRESET_LABEL,
+        SCORING_LABEL,
+        PROBLEM_KIND_LABEL,
+        type CollectionPreset,
+        type ProblemKind,
+    } from "@ojik/core";
     import Markdown from "$lib/Markdown.svelte";
 
     /**
@@ -16,12 +22,24 @@
         idx: number;
         kind: "problem" | "text";
         points: number;
+        /** 항목별 마감. 없으면 마감 없음 */
+        dueAt: string | null;
         body: string | null;
         heading: string | null;
         problemId: number | null;
         problemTitle: string | null;
+        problemKind: ProblemKind | null;
         timeLimitMs: number | null;
         memoryLimitMb: number | null;
+    }
+
+    /** 문제별 내 상태 */
+    interface Mine {
+        problemId: number;
+        solved: boolean;
+        best: number;
+        tries: number;
+        firstSolvedAt: string | null;
     }
 
     interface Collection {
@@ -48,6 +66,7 @@
         running: boolean;
         ended: boolean;
         solved: number[];
+        mine: Mine[];
     }
 
     const slug = $derived(page.params.slug ?? "");
@@ -70,12 +89,48 @@
     });
 
     const solvedSet = $derived(new Set(data?.solved ?? []));
+    const mineBy = $derived(new Map((data?.mine ?? []).map((m) => [m.problemId, m])));
+
+    const problemItems = $derived((data?.items ?? []).filter((i) => i.kind === "problem"));
+    const solvedHere = $derived(problemItems.filter((i) => solvedSet.has(i.problemId!)).length);
+
+    /**
+     * 마감 상태.
+     *
+     * 넘겨도 제출은 막지 않는다. 수업에서는 늦어도 받고 감점하는 쪽이 보통이라서다.
+     * 대신 지났는지, 곧인지를 눈에 띄게 둔다.
+     */
+    function dueState(item: Item): { text: string; cls: string } | null {
+        if (!item.dueAt) return null;
+        const due = new Date(item.dueAt).getTime();
+        const left = due - now;
+        const m = mineBy.get(item.problemId ?? -1);
+
+        // 이미 제때 풀었으면 마감은 더 볼 일이 없다
+        if (m?.firstSolvedAt && new Date(m.firstSolvedAt).getTime() <= due) {
+            return { text: "제출 완료", cls: "text-green-600 dark:text-green-400" };
+        }
+        if (m?.solved) {
+            return { text: "지각 제출", cls: "text-amber-600 dark:text-amber-400" };
+        }
+        if (left < 0) {
+            return { text: `마감 지남 (${formatDate(item.dueAt)})`, cls: "text-red-600 dark:text-red-400" };
+        }
+        if (left < 24 * 60 * 60 * 1000) {
+            const h = Math.floor(left / 3600000);
+            const mm = Math.floor((left % 3600000) / 60000);
+            return { text: `${h}시간 ${mm}분 남음`, cls: "text-amber-600 dark:text-amber-400" };
+        }
+        return { text: `마감 ${formatDate(item.dueAt)}`, cls: "text-zinc-400" };
+    }
 
     /** 코딩테스트 남은 시간. 1초마다 다시 계산한다 */
     let now = $state(Date.now());
     $effect(() => {
-        if (!data?.member?.endsAt || data.ended) return;
-        const t = setInterval(() => (now = Date.now()), 1000);
+        // 개인 타이머가 없어도 마감 표시가 흘러가야 하므로 늘 돈다.
+        // 타이머가 있으면 1초, 없으면 30초. 마감은 초 단위로 볼 일이 없다
+        const fast = !!data?.member?.endsAt && !data.ended;
+        const t = setInterval(() => (now = Date.now()), fast ? 1000 : 30_000);
         return () => clearInterval(t);
     });
 
@@ -147,6 +202,31 @@
         </div>
     {/if}
 
+    <!--
+        내 진도.
+        학생이 제일 먼저 궁금해하는 것이고, 전에는 강사만 명단에서 볼 수 있었다.
+    -->
+    {#if session.user && data.itemsVisible && problemItems.length > 0}
+        {@const pct = Math.round((solvedHere / problemItems.length) * 100)}
+        <div class="mt-4 rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+            <div class="flex items-baseline justify-between gap-3">
+                <span class="text-sm font-medium">내 진도</span>
+                <span class="text-sm tabular-nums">
+                    {solvedHere} / {problemItems.length}
+                    <span class="ml-1 text-xs text-zinc-400">{pct}%</span>
+                </span>
+            </div>
+            <div class="mt-2 h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                <div
+                    class="h-full rounded-full {solvedHere === problemItems.length
+                        ? 'bg-green-500'
+                        : 'bg-blue-500'}"
+                    style="width: {pct}%"
+                ></div>
+            </div>
+        </div>
+    {/if}
+
     {#if c.scoring !== "none"}
         <a
             href="/c/{c.slug}/scoreboard"
@@ -208,19 +288,42 @@
                         <Markdown source={item.body ?? ""} />
                     </section>
                 {:else}
+                    {@const m = mineBy.get(item.problemId ?? -1)}
+                    {@const d = dueState(item)}
                     <a
                         href="/problem/{item.problemId}"
-                        class="flex items-center gap-3 rounded-md border border-zinc-200 px-4 py-3 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900"
+                        class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-zinc-200 px-4 py-3 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900"
                     >
-                        <span class="w-6 shrink-0 text-center text-sm text-zinc-400">
-                            {#if solvedSet.has(item.problemId!)}
-                                <span class="text-green-600 dark:text-green-400">O</span>
+                        <span class="w-6 shrink-0 text-center text-sm">
+                            {#if m?.solved}
+                                <span class="text-green-600 dark:text-green-400" title="맞혔습니다">●</span>
+                            {:else if m}
+                                <span class="text-amber-500 dark:text-amber-400" title="{m.tries}번 냈지만 못 맞혔습니다">●</span>
                             {:else if c.preset === "contest"}
-                                {String.fromCharCode(65 + item.idx)}
+                                <span class="text-zinc-400">{String.fromCharCode(65 + item.idx)}</span>
                             {/if}
                         </span>
-                        <span class="flex-1 font-medium">{item.problemTitle}</span>
-                        <span class="text-xs text-zinc-400">
+
+                        <span class="min-w-0 flex-1">
+                            <span class="font-medium">{item.problemTitle}</span>
+                            {#if item.problemKind && item.problemKind !== "code"}
+                                <span class="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                                    {PROBLEM_KIND_LABEL[item.problemKind]}
+                                </span>
+                            {/if}
+                            {#if d}
+                                <span class="ml-1.5 text-xs {d.cls}">{d.text}</span>
+                            {/if}
+                        </span>
+
+                        <!-- 부분점수 문제는 맞힘 여부만으로 부족하다. 70점인지 0점인지가 안 보인다 -->
+                        {#if m && m.best > 0 && !m.solved}
+                            <span class="shrink-0 text-xs tabular-nums text-amber-600 dark:text-amber-400">
+                                {m.best}점
+                            </span>
+                        {/if}
+
+                        <span class="shrink-0 text-xs text-zinc-400">
                             {item.timeLimitMs} ms · {item.memoryLimitMb} MB
                         </span>
                     </a>

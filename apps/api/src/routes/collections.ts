@@ -13,6 +13,8 @@ import {
     MEMBER_ROLES,
     canAssist,
     parseRoster,
+    parseCourseMarkdown,
+    serializeCourseMarkdown,
     makeTempPassword,
     resultCsv,
     ROSTER_MAX_ROWS,
@@ -81,6 +83,8 @@ const ItemsBody = z.object({
                 kind: z.enum(ITEM_KINDS).default("problem"),
                 problemId: z.number().int().positive().optional(),
                 points: z.number().int().min(0).default(100),
+                /** 항목별 마감. ISO 문자열. 없으면 마감 없음 */
+                dueAt: z.string().datetime().nullable().optional(),
                 body: z.string().optional(),
                 heading: z.string().max(200).optional(),
             }),
@@ -271,10 +275,12 @@ export const collectionRoutes = new Hono<AuthEnv>()
                       idx: collectionItems.idx,
                       kind: collectionItems.kind,
                       points: collectionItems.points,
+                      dueAt: collectionItems.dueAt,
                       body: collectionItems.body,
                       heading: collectionItems.heading,
                       problemId: problems.id,
                       problemTitle: problems.title,
+                      problemKind: problems.kind,
                       timeLimitMs: problems.timeLimitMs,
                       memoryLimitMb: problems.memoryLimitMb,
                   })
@@ -289,21 +295,49 @@ export const collectionRoutes = new Hono<AuthEnv>()
             .from(collectionItems)
             .where(eq(collectionItems.collectionId, col.id));
 
-        // 내가 푼 문제. 상시 컬렉션의 진도 표시용
+        /*
+         * 내 진도.
+         *
+         * 맞힌 것, 냈지만 못 맞힌 것, 그리고 처음 맞힌 시각을 함께 준다. 시각이 필요한 건
+         * 항목별 마감과 견줘 "늦게 냈는지" 를 화면이 판단해야 해서다. 맞힘 여부만 주면
+         * 마감을 넘겨 푼 것과 제때 푼 것이 똑같이 보인다.
+         *
+         * 점수도 같이 준다. 부분점수 문제에서 "풀었다/못 풀었다" 만으로는 70점을 받았는지
+         * 0점을 받았는지 알 수가 없다.
+         */
         let solved: number[] = [];
+        let mine: Array<{
+            problemId: number;
+            solved: boolean;
+            best: number;
+            tries: number;
+            firstSolvedAt: string | null;
+        }> = [];
+
         const problemIds = items.filter((i) => i.problemId).map((i) => i.problemId!);
         if (user && problemIds.length > 0) {
             const got = await db
-                .selectDistinct({ problemId: submissions.problemId })
+                .select({
+                    problemId: submissions.problemId,
+                    solved: sql<boolean>`bool_or(${submissions.verdict} = 'accepted')`,
+                    best: sql<number>`max(${submissions.score})::int`,
+                    tries: sql<number>`count(*)::int`,
+                    firstSolvedAt: sql<string | null>`
+                        min(${submissions.createdAt}) FILTER (WHERE ${submissions.verdict} = 'accepted')
+                    `,
+                })
                 .from(submissions)
                 .where(
                     and(
                         eq(submissions.userId, user.id),
-                        eq(submissions.verdict, "accepted"),
                         inArray(submissions.problemId, problemIds),
+                        eq(submissions.status, "done"),
                     ),
-                );
-            solved = got.map((g) => g.problemId);
+                )
+                .groupBy(submissions.problemId);
+
+            mine = got;
+            solved = got.filter((g) => g.solved).map((g) => g.problemId);
         }
 
         return c.json({
@@ -316,6 +350,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
             running: isRunning(col, member),
             ended: hasEnded(col, member),
             solved,
+            mine,
         });
     })
 
@@ -377,6 +412,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
                         kind: it.kind,
                         problemId: it.kind === "problem" ? it.problemId! : null,
                         points: it.points,
+                        dueAt: it.dueAt ? new Date(it.dueAt) : null,
                         body: it.kind === "text" ? (it.body ?? null) : null,
                         heading: it.heading ?? null,
                     })),
@@ -631,6 +667,114 @@ export const collectionRoutes = new Hono<AuthEnv>()
     )
 
     /**
+     * 교재를 마크다운으로 내려받는다.
+     *
+     * 올리는 형식과 같다. 받아서 고치고 되올리는 게 교재를 손보는 제일 빠른 길이다.
+     * 화면에서 항목을 하나씩 옮기는 것보다 에디터에서 문단을 통째로 옮기는 쪽이 빠르다.
+     *
+     * 문제 본문은 안 들어간다. 여기 담기는 건 문제 번호 참조뿐이고, 문제 자체는
+     * 문제 목록에서 따로 받는다. 같이 넣으면 되올릴 때 문제가 복제된다.
+     */
+    .get("/:id{[0-9]+}/export", requireAuth, async (c) => {
+        const id = Number(c.req.param("id"));
+        await requireManage(c.get("user")!, id);
+
+        const rows = await db
+            .select()
+            .from(collectionItems)
+            .where(eq(collectionItems.collectionId, id))
+            .orderBy(asc(collectionItems.idx));
+
+        const markdown = serializeCourseMarkdown(
+            rows.map((r) =>
+                r.kind === "problem"
+                    ? { kind: "problem" as const, problemId: r.problemId! }
+                    : { kind: "text" as const, heading: r.heading, body: r.body ?? "" },
+            ),
+        );
+
+        return c.json({ markdown, items: rows.length });
+    })
+
+    /**
+     * 교재를 마크다운 한 장으로 올린다.
+     *
+     * 항목을 화면에서 하나씩 만드는 건 주차 하나만 넘어가도 지친다. 설명을 쓰다가
+     * 문제를 끼우는 순서 그대로 적고, 그걸 그대로 올릴 수 있어야 한다.
+     *
+     * 기존 항목을 전부 갈아엎는다. 뒤에 붙이는 방식으로 두면 두 번 올렸을 때 내용이
+     * 두 배가 되는데, 그게 더 흔한 사고다. 화면에서 경고한다.
+     */
+    .post(
+        "/:id{[0-9]+}/import",
+        requireAuth,
+        v("json", z.object({ markdown: z.string().min(1).max(1_000_000) })),
+        async (c) => {
+            const id = Number(c.req.param("id"));
+            await requireManage(c.get("user")!, id);
+            const { markdown } = c.req.valid("json");
+
+            const parsed = parseCourseMarkdown(markdown);
+            const errors = [...parsed.errors];
+
+            /*
+             * 참조한 문제가 실제로 있는지, 그리고 이 강의에 담을 수 있는지 본다.
+             *
+             * 없는 번호를 그대로 넣으면 학생 화면에서 빈 줄이 되고, 왜 안 보이는지
+             * 아무도 모른다. 남의 강의 전용 문제를 번호로 끌어오는 것도 막아야 한다.
+             */
+            const wanted = parsed.items.filter((i) => i.kind === "problem").map((i) => i.problemId);
+            const found =
+                wanted.length > 0
+                    ? await db
+                          .select({ id: problems.id, owner: problems.ownerCollectionId, isPublic: problems.isPublic })
+                          .from(problems)
+                          .where(inArray(problems.id, wanted))
+                    : [];
+            const byId = new Map(found.map((p) => [p.id, p]));
+
+            const usable = new Set<number>();
+            for (const pid of wanted) {
+                const p = byId.get(pid);
+                if (!p) {
+                    errors.push(`문제 ${pid} 이(가) 없습니다`);
+                    continue;
+                }
+                if (p.owner !== null && p.owner !== id) {
+                    errors.push(`문제 ${pid} 은(는) 다른 강의 전용입니다`);
+                    continue;
+                }
+                usable.add(pid);
+            }
+
+            const items = parsed.items.filter((i) => i.kind !== "problem" || usable.has(i.problemId));
+
+            await db.transaction(async (tx) => {
+                await tx.delete(collectionItems).where(eq(collectionItems.collectionId, id));
+                if (items.length) {
+                    await tx.insert(collectionItems).values(
+                        items.map((it, idx) => ({
+                            collectionId: id,
+                            idx,
+                            kind: it.kind,
+                            problemId: it.kind === "problem" ? it.problemId : null,
+                            points: 100,
+                            body: it.kind === "text" ? it.body : null,
+                            heading: it.kind === "text" ? it.heading : null,
+                        })),
+                    );
+                }
+            });
+
+            return c.json({
+                items: items.length,
+                problems: items.filter((i) => i.kind === "problem").length,
+                errors,
+            });
+        },
+    )
+
+    /**
      * 성적표. 학생 x 문제 표를 만든다.
      *
      * 순위표(scoreboard)와 다른 물건이다. 순위표는 대회용으로 등수와 페널티를 보고,
@@ -648,6 +792,7 @@ export const collectionRoutes = new Hono<AuthEnv>()
             .select({
                 problemId: collectionItems.problemId,
                 idx: collectionItems.idx,
+                dueAt: collectionItems.dueAt,
                 title: problems.title,
                 kind: problems.kind,
             })
@@ -686,6 +831,10 @@ export const collectionRoutes = new Hono<AuthEnv>()
                           best: sql<number>`max(${submissions.score})::int`,
                           tries: sql<number>`count(*)::int`,
                           solved: sql<boolean>`bool_or(${submissions.verdict} = 'accepted')`,
+                          /** 처음 맞힌 시각. 항목 마감과 견줘 지각인지 본다 */
+                          firstSolvedAt: sql<string | null>`
+                              min(${submissions.createdAt}) FILTER (WHERE ${submissions.verdict} = 'accepted')
+                          `,
                       })
                       .from(submissions)
                       .where(
