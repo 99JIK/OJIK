@@ -24,6 +24,10 @@ import * as isolate from "./isolate";
  */
 const MAX_BOX_ID = 1000;
 
+/** images/runner/entrypoint.sh 가 준비를 끝내고 찍는 줄. 바꾸면 거기도 같이 바꿀 것 */
+const READY_LINE = "[ojik-runner] ready";
+const READY_TIMEOUT_MS = 15_000;
+
 export interface Box {
     runner: RunnerId;
     containerKey: string;
@@ -229,6 +233,9 @@ export class RunnerPool {
         const hostBoxRoot = path.join(config.BOX_ROOT, config.WORKER_ID, key);
 
         await fs.mkdir(hostBoxRoot, { recursive: true });
+        // 박스는 0777 로 열어 둔다(isolate.openBoxArgs). 다른 호스트 사용자가 거기 닿지 못하게
+        // 바로 위를 워커만 들어갈 수 있게 막는다
+        await fs.chmod(hostBoxRoot, 0o700);
 
         // 이전에 뜬 게 있으면 지우고 새로 만든다. 재사용하면 박스 상태가 어중간하게 남는다
         const existing = this.docker.getContainer(name);
@@ -259,17 +266,28 @@ export class RunnerPool {
         });
         await container.start();
 
-        // entrypoint 가 cgroup 위임에 실패하면 컨테이너가 바로 죽는다.
-        // 그대로 두면 다음 exec 이 "container not running" 으로 떨어져 진짜 원인을 못 본다
-        const info = await container.inspect();
-        if (!info.State.Running) {
-            const logs = await container
+        // entrypoint 가 cgroup 위임을 끝내기 전에 exec 하면 그 exec 때문에 위임이 실패하고
+        // 컨테이너가 죽는다. 준비 끝 줄이 로그에 찍힐 때까지 exec 없이 기다린다.
+        // 위임에 실패해 죽은 경우도 여기서 잡아야 다음 exec 이 "container not running" 으로
+        // 떨어져 진짜 원인을 못 보는 일이 없다
+        const logs = () =>
+            container
                 .logs({ stdout: true, stderr: true, tail: 20 })
                 .then((b) => b.toString("utf8"))
                 .catch(() => "");
-            throw new Error(
-                `러너 컨테이너 ${name} 이(가) 기동 직후 종료됐습니다 (exit ${info.State.ExitCode}).\n${logs}`,
-            );
+        const deadline = Date.now() + READY_TIMEOUT_MS;
+        for (;;) {
+            const info = await container.inspect();
+            if (!info.State.Running) {
+                throw new Error(
+                    `러너 컨테이너 ${name} 이(가) 기동 직후 종료됐습니다 (exit ${info.State.ExitCode}).\n${await logs()}`,
+                );
+            }
+            if ((await logs()).includes(READY_LINE)) break;
+            if (Date.now() > deadline) {
+                throw new Error(`러너 컨테이너 ${name} 이(가) ${READY_TIMEOUT_MS}ms 안에 준비되지 않았습니다.\n${await logs()}`);
+            }
+            await new Promise((r) => setTimeout(r, 100));
         }
 
         return { key, runner, container, hostBoxRoot };
@@ -337,6 +355,10 @@ export class RunnerPool {
         const r = await this.exec(box, ["isolate", ...isolate.initArgs(box.boxId)]);
         if (r.exitCode !== 0) {
             throw new Error(`isolate --init failed (box ${box.boxId}): ${r.stderr || r.stdout}`);
+        }
+        const o = await this.exec(box, isolate.openBoxArgs(r.stdout.trim()));
+        if (o.exitCode !== 0) {
+            throw new Error(`box chmod failed (box ${box.boxId}): ${o.stderr || o.stdout}`);
         }
     }
 

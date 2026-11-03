@@ -52,4 +52,10 @@ mkdir -p /run/isolate/locks /var/local/lib/isolate
 # 설정이 온전한지 여기서 한 번 본다. 첫 제출에서 알게 되는 것보다 낫다
 isolate --check-config || die "isolate 설정 파일이 올바르지 않습니다."
 
+# 준비 끝 신호. 워커와 스모크는 이 줄을 로그에서 본 뒤에야 docker exec 를 한다.
+# 위 위임 도중에 exec 가 들어오면 그 프로세스가 루트 cgroup 에 붙어서
+# subtree_control 쓰기가 실패하고 컨테이너가 죽는다. 확인용 exec 도 같은 문제를 내므로
+# 신호는 exec 가 아닌 로그로 준다
+echo "[ojik-runner] ready"
+
 exec "$@"
